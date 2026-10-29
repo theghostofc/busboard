@@ -1,0 +1,57 @@
+// Grants the dedicated `busboard` system user exactly the privileged
+// operations BusBoard needs, without running any BusBoard service as root:
+//
+//   - manage NetworkManager connections (join WiFi, create/activate the
+//     fallback AP, scan, toggle the WiFi radio)
+//   - restart NetworkManager.service (netwatch healing ladder)
+//   - start/stop busboard-hotspot.service (WPA2 setup hotspot via hostapd)
+//   - reboot the machine (netwatch last resort, with exponential backoff)
+//
+// Install to /etc/polkit-1/rules.d/50-busboard-nm.rules (see install.sh).
+//
+// If you add a new privileged call to busboard/core/network.py, add the
+// matching action here - and nothing broader.
+polkit.addRule(function(action, subject) {
+    if (subject.user !== "busboard") {
+        return polkit.Result.NOT_HANDLED;
+    }
+
+    var nmActions = [
+        "org.freedesktop.NetworkManager.settings.modify.own",
+        "org.freedesktop.NetworkManager.settings.modify.system",
+        "org.freedesktop.NetworkManager.network-control",
+        "org.freedesktop.NetworkManager.enable-disable-wifi",
+        "org.freedesktop.NetworkManager.wifi.scan",
+        "org.freedesktop.NetworkManager.wifi.share.protected",
+        "org.freedesktop.NetworkManager.wifi.share.open"
+    ];
+    if (nmActions.indexOf(action.id) !== -1) {
+        return polkit.Result.YES;
+    }
+
+    // `systemctl restart NetworkManager.service` only - no other unit or verb.
+    if (action.id === "org.freedesktop.systemd1.manage-units" &&
+        action.lookup("unit") === "NetworkManager.service" &&
+        action.lookup("verb") === "restart") {
+        return polkit.Result.YES;
+    }
+
+    // Start/stop the WPA2 setup hotspot (hostapd) - that unit and verbs only.
+    if (action.id === "org.freedesktop.systemd1.manage-units" &&
+        action.lookup("unit") === "busboard-hotspot.service" &&
+        (action.lookup("verb") === "start" || action.lookup("verb") === "stop")) {
+        return polkit.Result.YES;
+    }
+
+    // `systemctl reboot`. The multiple-sessions variant is needed because the
+    // kiosk user has a lingering session.
+    var rebootActions = [
+        "org.freedesktop.login1.reboot",
+        "org.freedesktop.login1.reboot-multiple-sessions"
+    ];
+    if (rebootActions.indexOf(action.id) !== -1) {
+        return polkit.Result.YES;
+    }
+
+    return polkit.Result.NOT_HANDLED;
+});

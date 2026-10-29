@@ -1,0 +1,17 @@
+[Unit]
+Description=BusBoard: import WiFi credentials from the boot partition
+Documentation=file:///opt/busboard/docs/SETUP.md
+# Lets you fix WiFi by editing a text file on the SD card from any computer,
+# instead of reformatting. Runs only if the file exists.
+ConditionPathExists=/boot/firmware/busboard-wifi.txt
+After=NetworkManager.service
+Wants=NetworkManager.service
+Before=busboard-netwatch.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/busboard-wifi-import /boot/firmware/busboard-wifi.txt
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target

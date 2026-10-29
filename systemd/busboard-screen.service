@@ -1,0 +1,20 @@
+[Unit]
+Description=BusBoard screen power (HDMI off outside the display schedule)
+# Lives and dies with the kiosk: it talks to cage's Wayland session.
+After=busboard-display.service busboard-web.service
+BindsTo=busboard-display.service
+PartOf=busboard-display.service
+
+[Service]
+Type=simple
+User=planner
+WorkingDirectory=/opt/busboard
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/busboard/.venv/bin/python -m busboard.screen.main
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+
+[Install]
+WantedBy=busboard-display.service

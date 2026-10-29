@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+{% block title %}BusBoard - WiFi{% endblock %}
+{% block content %}
+<style>
+  .ssid-picker { position: relative; }
+  .ssid-picker .autocomplete-results {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    z-index: 20;
+    border-radius: 0 0 4px 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  }
+  .ssid-option { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+  .ssid-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ssid-meta { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); flex-shrink: 0; }
+</style>
+{%- set hotspot_on = report.status.ap_active %}
+
+<div class="card">
+  <h2>Current connection</h2>
+  <table>
+    <tr><td>WiFi</td><td>{% if report.status.wifi_connected %}<span class="status-ok">{{ report.status.wifi_ssid }}</span>{% elif hotspot_on %}Setup hotspot is on{% else %}<span class="status-bad">Not connected</span>{% endif %}</td></tr>
+    <tr><td>Ethernet</td><td>{% if report.status.ethernet_connected %}<span class="status-ok">Connected</span>{% else %}Not connected{% endif %}</td></tr>
+    <tr><td>Internet</td><td>{% if report.status.internet_reachable %}<span class="status-ok">Yes</span>{% else %}<span class="status-bad">No</span>{% endif %}</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Join a WiFi network</h2>
+  <p class="muted">
+    Saved networks are retried automatically forever. An Ethernet cable can be
+    plugged in at any time: it's used while connected, and WiFi takes over
+    again when it's unplugged.
+  </p>
+  <form method="post" action="{{ url_for('admin_wifi') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <label for="ssid">Network name (SSID)</label>
+    {%- if hotspot_on %}
+    <p class="field-hint">Type the name exactly. Nearby networks can't be listed while the setup hotspot is on.</p>
+    <input type="text" id="ssid" name="ssid" required autocomplete="off">
+    {%- else %}
+    <p class="field-hint">Pick a nearby network or type a name (e.g. for a hidden network).</p>
+    <div class="ssid-picker">
+      <input type="text" id="ssid" name="ssid" required autocomplete="off" spellcheck="false"
+             placeholder="Scanning for networks&hellip;" aria-expanded="false" aria-controls="nearby-networks">
+      <div id="nearby-networks" class="autocomplete-results" role="listbox" hidden></div>
+    </div>
+    {%- endif %}
+
+    <label for="password">Password</label>
+    <input type="password" id="password" name="password" autocomplete="new-password">
+    <label style="font-weight:normal;display:flex;gap:6px;align-items:center;margin-top:4px;">
+      <input type="checkbox" id="show-join-password" style="width:auto;"> Show password
+    </label>
+
+    <label for="wifi_country">Country</label>
+    <p class="field-hint">Decides which WiFi channels may be used. With the wrong country the board may not see a router on channel 12 or 13.</p>
+    <select id="wifi_country" name="wifi_country">
+      {%- for code, name in wifi_countries %}
+      <option value="{{ code }}"{% if code == wifi_country %} selected{% endif %}>{{ name }} ({{ code }})</option>
+      {%- endfor %}
+    </select>
+
+    <button type="submit">Save and connect</button>
+  </form>
+</div>
+
+{%- if saved %}
+<div class="card">
+  <h2>Other saved networks</h2>
+  <table>
+    {%- for net in saved %}
+    <tr>
+      <td><strong>{{ net.ssid }}</strong></td>
+      <td style="text-align:right;white-space:nowrap;">
+        <form method="post" action="{{ url_for('admin_wifi_connect') }}" style="display:inline;">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="profile" value="{{ net.name }}">
+          <button type="submit" style="width:auto;margin:0;">Connect</button>
+        </form>
+        <form method="post" action="{{ url_for('admin_wifi_forget') }}" style="display:inline;"
+              onsubmit="return confirm('Forget &quot;' + {{ net.ssid|tojson|forceescape }} + '&quot;? The board will no longer connect to it.');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="profile" value="{{ net.name }}">
+          <button type="submit" style="width:auto;margin:0;background:#991b1b;">Forget</button>
+        </form>
+      </td>
+    </tr>
+    {%- endfor %}
+  </table>
+</div>
+{%- endif %}
+
+<div class="card">
+  <h2>Setup hotspot</h2>
+  <p class="muted">
+    If the board has no network link for a few minutes, it starts its own
+    WiFi network so you can reach this page. While it's on, the board shows
+    the name, password and QR codes.
+  </p>
+  <form method="post" action="{{ url_for('admin_wifi_hotspot') }}" style="margin-bottom:0.75rem;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="toggle-text" style="font-weight:600;font-size:0.9rem;margin-bottom:0.3rem;">Security</div>
+    <div class="seg" role="radiogroup">
+      <label><input type="radio" name="security" value="open"{% if ap_security == "open" %} checked{% endif %} onchange="this.form.submit()"><span>Open (no password)</span></label>
+      <label><input type="radio" name="security" value="wpa2"{% if ap_security == "wpa2" %} checked{% endif %} onchange="this.form.submit()"><span>WPA2 password</span></label>
+    </div>
+    <p class="field-hint">
+      Open works on every Pi; the admin pages still need your login. Switch to WPA2
+      only after <code>sudo busboard-hotspot-test --wpa2</code> worked with your phone.
+    </p>
+  </form>
+  <table>
+    <tr><td>Name</td><td><strong>{{ ap_ssid }}</strong></td></tr>
+    <tr>
+      <td>Password</td>
+      <td>
+        {%- if ap_password %}
+        <code id="ap-password" data-secret="{{ ap_password }}">&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;</code>
+        <button type="button" id="toggle-ap-password" style="width:auto;margin:0 0 0 8px;padding:0.2rem 0.6rem;">Show password</button>
+        {%- else %}None (open network){% endif %}
+        <button type="button" id="toggle-ap-qr" style="width:auto;margin:0 0 0 8px;padding:0.2rem 0.6rem;">Show QR code</button>
+      </td>
+    </tr>
+    <tr><td>Setup address</td><td>http://10.42.0.1:8080/admin</td></tr>
+  </table>
+  <div id="ap-qr" hidden style="margin-top:0.75rem;text-align:center;">
+    <img src="{{ hotspot_qr }}" alt="QR code to join the {{ ap_ssid }} WiFi" width="220" height="220"
+         style="background:#fff;padding:6px;border-radius:6px;">
+    <div class="field-hint">Scan with a phone camera to join the hotspot.</div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var joinPw = document.getElementById("password");
+  document.getElementById("show-join-password").addEventListener("change", function () {
+    joinPw.type = this.checked ? "text" : "password";
+  });
+
+  var apPw = document.getElementById("ap-password");
+  var apBtn = document.getElementById("toggle-ap-password");
+  if (apPw && apBtn) {
+    var shown = false;
+    apBtn.addEventListener("click", function () {
+      shown = !shown;
+      apPw.textContent = shown ? apPw.dataset.secret : "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
+      apBtn.textContent = shown ? "Hide password" : "Show password";
+    });
+  }
+  var qr = document.getElementById("ap-qr");
+  var qrBtn = document.getElementById("toggle-ap-qr");
+  qrBtn.addEventListener("click", function () {
+    qr.hidden = !qr.hidden;
+    qrBtn.textContent = qr.hidden ? "Show QR code" : "Hide QR code";
+  });
+
+  // Nearby networks as a themed dropdown (same look as the stop search),
+  // not the browser's own autocomplete popup. Not shown while the hotspot
+  // is on - the radio can't scan then.
+  var list = document.getElementById("nearby-networks");
+  if (list) {
+    var input = document.getElementById("ssid");
+    var networks = [];
+
+    function bars(signal) {
+      var n = signal >= 75 ? 4 : signal >= 50 ? 3 : signal >= 25 ? 2 : 1;
+      var svg = '<svg viewBox="0 0 16 12" width="16" height="12" aria-hidden="true">';
+      for (var i = 0; i < 4; i++) {
+        var h = 3 + i * 3;
+        svg += '<rect x="' + (i * 4) + '" y="' + (12 - h) + '" width="3" height="' + h + '" rx="0.5" fill="currentColor" opacity="' + (i < n ? 1 : 0.25) + '"/>';
+      }
+      return svg + "</svg>";
+    }
+    var LOCK = '<svg viewBox="0 0 24 24" width="12" height="12" aria-label="secured"><path fill="currentColor" d="M17 9h-1V7a4 4 0 0 0-8 0v2H7a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2zm-7-2a2 2 0 0 1 4 0v2h-4z"/></svg>';
+
+    function close() { list.hidden = true; input.setAttribute("aria-expanded", "false"); }
+
+    function render() {
+      var q = input.value.trim().toLowerCase();
+      var shown = networks.filter(function (n) { return !q || n.ssid.toLowerCase().indexOf(q) !== -1; });
+      list.textContent = "";
+      if (!shown.length) { close(); return; }
+      shown.forEach(function (n) {
+        var row = document.createElement("div");
+        row.className = "ssid-option";
+        row.setAttribute("role", "option");
+        var name = document.createElement("span");
+        name.className = "ssid-name";
+        name.textContent = n.ssid;  // SSIDs are untrusted text
+        var meta = document.createElement("span");
+        meta.className = "ssid-meta";
+        meta.innerHTML = (n.secure ? LOCK : "") + bars(n.signal);  // static markup only
+        meta.title = n.signal + "% signal" + (n.secure ? "" : ", open network");
+        row.append(name, meta);
+        row.addEventListener("mousedown", function (e) {
+          e.preventDefault();  // keep focus in the input
+          input.value = n.ssid;
+          close();
+          document.getElementById("password").focus();
+        });
+        list.appendChild(row);
+      });
+      list.hidden = false;
+      input.setAttribute("aria-expanded", "true");
+    }
+
+    input.addEventListener("focus", render);
+    input.addEventListener("input", render);
+    input.addEventListener("blur", close);
+    input.addEventListener("keydown", function (e) { if (e.key === "Escape") close(); });
+
+    fetch("{{ url_for('admin_api_wifi_scan') }}", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        networks = data.networks || [];
+        input.placeholder = networks.length ? "Pick a nearby network or type a name" : "No networks found - type the name";
+        if (document.activeElement === input) render();
+      })
+      .catch(function () { input.placeholder = "Type the network name"; });
+  }
+})();
+</script>
+{% endblock %}

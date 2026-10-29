@@ -1,0 +1,31 @@
+# Python / uv
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# macOS
+.DS_Store
+
+# Local runtime state and secrets - never commit these
+# (BusBoard keeps them in /etc/busboard, /var/lib/busboard, /run/busboard;
+# local dev points BUSBOARD_*_DIR at a scratch directory)
+config.yaml
+api_key
+flask_secret_key
+*.local.yaml
+.env
+*.log
+/var/
+
+# Captured API responses / debugging output
+response.json
+
+# Local backups and agent workflow scratch
+.backup/
+.agents/

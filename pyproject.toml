@@ -1,0 +1,33 @@
+[project]
+name = "busboard"
+version = "0.2.0"
+description = "Real-time Luxembourg (mobiliteit.lu) departure board for a Raspberry Pi kiosk"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+# Raspberry Pi OS Trixie ships Python 3.13; see .python-version.
+requires-python = ">=3.11"
+# Direct dependencies, pinned. Everything else (and hashes) is pinned in
+# uv.lock - change versions here, then run `uv lock` and commit both files.
+dependencies = [
+    "Flask==3.0.3",
+    "Werkzeug==3.0.3",
+    "PyYAML==6.0.2",
+    "requests==2.32.3",
+    "waitress==3.0.2",
+    "segno==1.6.6",
+]
+
+[tool.uv]
+# An application run with `python -m busboard.<service>.main` from the
+# project directory, not a library: uv only installs the dependencies.
+package = false
+
+[tool.ruff]
+# Lint with `uv run --with ruff ruff check .` (ruff isn't a project dependency).
+extend-exclude = [".agents", ".backup"]
+
+[tool.ruff.lint]
+# Pinned rule set: pyflakes, pycodestyle errors, import sorting. Newer ruff
+# releases enable many more rules by default; opt into those explicitly.
+select = ["E4", "E7", "E9", "F", "I"]

@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en" data-theme="{{ auto_theme if default_theme == "auto" else default_theme }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}BusBoard{% endblock %}</title>
+
+  {# Admin panel theme, applied before first paint. Choice per browser
+     (localStorage "busboard_panel_theme"): light, dark or auto. "auto" means
+     the same as on the board: light by day, dark at night (sunrise/sunset at
+     the configured stop, computed server-side as auto_theme). Until you pick
+     one, the panel uses the board's theme setting. #}
+  <script>
+    var PANEL_THEMES = ["light", "dark", "auto"];
+    var AUTO_RESOLVED = "{{ auto_theme }}";  // "light" or "dark", right now
+    // Inline SVG (sun / moon / half sun-half moon) - no emoji or font needed.
+    var PANEL_ICONS = {
+      light: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="currentColor"/><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 1.5v2.5M12 20v2.5M1.5 12H4M20 12h2.5M4.6 4.6l1.8 1.8M17.6 17.6l1.8 1.8M4.6 19.4l1.8-1.8M17.6 6.4l1.8-1.8"/></g></svg>',
+      dark:  '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M20.5 14.6A8.5 8.5 0 0 1 9.4 3.5a8.5 8.5 0 1 0 11.1 11.1z"/></svg>',
+      auto:  '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path fill="currentColor" d="M12 3a9 9 0 0 1 0 18z"/></svg>'
+    };
+    var PANEL_LABELS = { light: "Light", dark: "Dark", auto: "Auto (light by day, dark at night)" };
+
+    function normalizeTheme(t) {
+      return PANEL_THEMES.indexOf(t) !== -1 ? t : "auto";
+    }
+
+    function getPanelTheme() {
+      return normalizeTheme(localStorage.getItem("busboard_panel_theme") || "{{ default_theme }}");
+    }
+
+    function applyPanelTheme(choice) {
+      choice = normalizeTheme(choice);
+      document.documentElement.setAttribute("data-theme", choice === "auto" ? AUTO_RESOLVED : choice);
+      var btn = document.getElementById("theme-toggle");
+      if (btn) {
+        btn.innerHTML = PANEL_ICONS[choice];  // static markup only
+        btn.title = "Admin panel theme: " + PANEL_LABELS[choice] + " (click to change)";
+      }
+      localStorage.setItem("busboard_panel_theme", choice);
+    }
+
+    // Run immediately - before any paint - to avoid a flash
+    (function () { applyPanelTheme(getPanelTheme()); })();
+  </script>
+
+  <style>
+    /* ── Colour tokens ────────────────────────────────────────────────── */
+    /* Light values */
+    :root {
+      color-scheme: light;  /* native controls (time pickers, selects) follow the theme */
+      --bg:           #f4f5f7;
+      --surface:      #ffffff;
+      --surface-alt:  #f0f2f5;
+      --border:       #d1d5db;
+      --text:         #1a1a1a;
+      --text-muted:   #6b7280;
+      --input-bg:     #ffffff;
+      --input-border: #d1d5db;
+      --link:         #2563eb;
+      --row-hover:    #eef2ff;
+      --flash-ok-bg:  #dcfce7;
+      --flash-ok-fg:  #166534;
+      --flash-err-bg: #fee2e2;
+      --flash-err-fg: #991b1b;
+      --status-ok:    #166534;
+      --status-bad:   #991b1b;
+      --table-border: #e5e7eb;
+      --stop-card-bg: #f8faff;
+      --stop-card-border: #dde3f0;
+      --stop-uncfg-bg:    #fafafa;
+      --stop-uncfg-border: #e5e7eb;
+      --nav-active-bg: #ffffff;
+      --nav-active-fg: #1f2d3d;
+      --accent: #2563eb;
+    }
+
+    /* Dark values */
+    [data-theme="dark"] {
+      color-scheme: dark;
+      --bg:           #0f1117;
+      --surface:      #1a1d27;
+      --surface-alt:  #22263a;
+      --border:       #2e3347;
+      --text:         #e8eaf0;
+      --text-muted:   #8c929e;
+      --input-bg:     #1a1d27;
+      --input-border: #3c404a;
+      --link:         #7da5f5;
+      --row-hover:    #1e2235;
+      --flash-ok-bg:  #14532d;
+      --flash-ok-fg:  #bbf7d0;
+      --flash-err-bg: #450a0a;
+      --flash-err-fg: #fecaca;
+      --status-ok:    #86efac;
+      --status-bad:   #fca5a5;
+      --table-border: #2e3347;
+      --stop-card-bg:     #1e2235;
+      --stop-card-border: #2e3347;
+      --stop-uncfg-bg:    #181b26;
+      --stop-uncfg-border: #2e3347;
+      --nav-active-bg: #7da5f5;
+      --nav-active-fg: #0f1117;
+      --accent: #3b6fe0;
+    }
+
+    /* ── Base layout ──────────────────────────────────────────────────── */
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, sans-serif;
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+    }
+    a { color: var(--link); }
+
+    /* ── Header ───────────────────────────────────────────────────────── */
+    header {
+      background: #1f2d3d;   /* intentionally fixed dark — brand colour */
+      color: #fff;
+      padding: 0.75rem 1.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    header h1 { margin: 0; font-size: 1.05rem; white-space: nowrap; }
+
+    nav { display: flex; align-items: center; gap: 0.15rem; flex-wrap: wrap; }
+    nav a {
+      display: inline-flex;
+      align-items: center;
+      height: 2rem;
+      color: #cbd5e1;
+      text-decoration: none;
+      padding: 0 0.6rem;
+      border-radius: 4px;
+      font-size: 0.88rem;
+      border-bottom: 2px solid transparent;
+    }
+    nav a:hover { color: #fff; background: rgba(255,255,255,0.1); }
+    /* Current page: filled pill in the panel theme's accent colour. */
+    nav a.active,
+    nav a.active:hover {
+      background: var(--nav-active-bg);
+      color: var(--nav-active-fg);
+      font-weight: 600;
+    }
+
+    /* Admin panel theme toggle - cycles light/dark/auto for this browser only.
+       Same height as the links so it lines up with them. */
+    #theme-toggle {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 2rem;
+      height: 2rem;
+      padding: 0;
+      margin: 0 0 0 0.4rem;
+      background: rgba(255,255,255,0.12);
+      border: 1px solid rgba(255,255,255,0.2);
+      color: #fff;
+      border-radius: 4px;
+      cursor: pointer;
+      line-height: 1;
+    }
+    #theme-toggle:hover { background: rgba(255,255,255,0.22); }
+    /* ── Main content ─────────────────────────────────────────────────── */
+    main { max-width: 640px; margin: 1.5rem auto; padding: 0 1rem; }
+
+    .card {
+      background: var(--surface);
+      border-radius: 8px;
+      padding: 1.25rem;
+      margin-bottom: 1rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      border: 1px solid var(--border);
+    }
+    .card h2 { margin: 0 0 0.75rem; font-size: 1rem; }
+    .card h3 { margin: 1rem 0 0.4rem; font-size: 0.9rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+
+    /* ── Forms ────────────────────────────────────────────────────────── */
+    label {
+      display: block;
+      margin: 0.75rem 0 0.25rem;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--text);
+    }
+    .field-hint {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin: 0.15rem 0 0.1rem;
+    }
+    input[type=text],
+    input[type=password],
+    input[type=number],
+    select {
+      width: 100%;
+      padding: 0.5rem;
+      border: 1px solid var(--input-border);
+      border-radius: 4px;
+      background: var(--input-bg);
+      color: var(--text);
+      font-size: 0.95rem;
+    }
+    input:focus, select:focus {
+      outline: 2px solid #2563eb;
+      outline-offset: 1px;
+    }
+    button, .btn {
+      background: #2563eb;
+      color: #fff;
+      border: none;
+      padding: 0.6rem 1.2rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.95rem;
+      margin-top: 1rem;
+    }
+    button:hover, .btn:hover { background: #1d4ed8; }
+
+    /* ── Flash messages ───────────────────────────────────────────────── */
+    .flash {
+      padding: 0.6rem 1rem;
+      border-radius: 4px;
+      margin-bottom: 0.75rem;
+      font-size: 0.9rem;
+    }
+    .flash.success { background: var(--flash-ok-bg);  color: var(--flash-ok-fg); }
+    .flash.error   { background: var(--flash-err-bg); color: var(--flash-err-fg); }
+
+    /* ── Utilities ────────────────────────────────────────────────────── */
+    .muted       { color: var(--text-muted); font-size: 0.85rem; }
+    .status-ok   { color: var(--status-ok);  font-weight: 600; }
+    .status-bad  { color: var(--status-bad); font-weight: 600; }
+
+    /* ── Tables ───────────────────────────────────────────────────────── */
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    td, th {
+      text-align: left;
+      padding: 0.35rem 0.5rem;
+      border-bottom: 1px solid var(--table-border);
+    }
+
+    /* ── Autocomplete ─────────────────────────────────────────────────── */
+    .autocomplete-results {
+      border: 1px solid var(--input-border);
+      border-top: none;
+      max-height: 200px;
+      overflow-y: auto;
+      background: var(--surface);
+      position: relative;
+      z-index: 10;
+    }
+    .autocomplete-results div {
+      padding: 0.4rem 0.6rem;
+      cursor: pointer;
+      color: var(--text);
+    }
+    .autocomplete-results div:hover { background: var(--row-hover); }
+
+
+    /* ── Controls: toggle switch, segmented buttons, day chips ────────── */
+    /* All are real <input>s (checkbox/radio) styled with the theme tokens,
+       so forms still post normally and keyboard focus works. */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.6rem 0;
+      border-bottom: 1px solid var(--table-border);
+    }
+    .toggle-row:last-child { border-bottom: none; }
+    .toggle-row .toggle-text { font-weight: 600; font-size: 0.9rem; }
+    .toggle-row .field-hint { font-weight: normal; }
+    .switch { position: relative; display: inline-block; width: 42px; height: 24px; flex-shrink: 0; margin: 0; }
+    .switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+    .switch .track {
+      position: absolute; inset: 0; border-radius: 12px;
+      background: var(--input-border); transition: background 0.15s;
+    }
+    .switch .track::after {
+      content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px;
+      border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.3); transition: transform 0.15s;
+    }
+    .switch input:checked + .track { background: var(--accent); }
+    .switch input:checked + .track::after { transform: translateX(18px); }
+    .switch input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    .seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--input-border); border-radius: 6px; overflow: hidden; }
+    .seg label { margin: 0; font-weight: 500; font-size: 0.88rem; }
+    .seg input { position: absolute; opacity: 0; pointer-events: none; }
+    .seg span {
+      display: inline-block; padding: 0.4rem 0.8rem; cursor: pointer;
+      background: var(--input-bg); color: var(--text); border-right: 1px solid var(--input-border);
+    }
+    .seg label:last-child span { border-right: none; }
+    .seg input:checked + span { background: var(--accent); color: #fff; font-weight: 600; }
+    .seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+    .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+    .chip { margin: 0; font-weight: 500; }
+    .chip input { position: absolute; opacity: 0; pointer-events: none; }
+    .chip span {
+      display: inline-block; min-width: 2.6rem; text-align: center; padding: 0.25rem 0.4rem;
+      border-radius: 999px; border: 1px solid var(--input-border); cursor: pointer;
+      font-size: 0.8rem; color: var(--text-muted); background: var(--input-bg);
+    }
+    .chip input:checked + span { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+    .chip input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .link-btn {
+      background: none; border: none; padding: 0; margin: 0; color: var(--link);
+      font-size: 0.8rem; cursor: pointer; text-decoration: underline;
+    }
+    .link-btn:hover { background: none; }
+    /* Section reached through a link (e.g. Options > Leave now): briefly mark it. */
+    :target { scroll-margin-top: 1rem; animation: target-flash 2s ease-out 1; }
+    @keyframes target-flash { from { box-shadow: 0 0 0 3px var(--accent); } to { box-shadow: 0 0 0 3px transparent; } }
+    .td-hint { font-size: 0.78rem; color: var(--text-muted); margin-top: 0.15rem; font-weight: normal; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>BusBoard</h1>
+    {%- macro navlink(endpoint, label) -%}
+      <a href="{{ url_for(endpoint) }}"{% if request.endpoint == endpoint %} class="active" aria-current="page"{% endif %}>{{ label }}</a>
+    {%- endmacro %}
+    <nav>
+      {{ navlink('status', 'Status') }}
+      {%- if logged_in %}
+      {{ navlink('admin_stops', 'Stops') }}
+      {{ navlink('admin_api_key', 'API Key') }}
+      {{ navlink('admin_schedule', 'Schedule') }}
+      {{ navlink('admin_options', 'Options') }}
+      {{ navlink('admin_wifi', 'WiFi') }}
+      {{ navlink('admin_account', 'Account') }}
+      {%- else %}
+      {{ navlink('admin_login', 'Admin login') }}
+      {%- endif %}
+      <button type="button" id="theme-toggle" aria-label="Change admin panel theme"></button>
+    </nav>
+  </header>
+
+  <main>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="flash {{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+
+  <script>
+    // Sync toggle icon after DOM is ready (the <head> script ran before the
+    // button existed), then wire the click handler.
+    applyPanelTheme(getPanelTheme());
+
+    document.getElementById("theme-toggle").addEventListener("click", function () {
+      var next = PANEL_THEMES[(PANEL_THEMES.indexOf(getPanelTheme()) + 1) % PANEL_THEMES.length];
+      applyPanelTheme(next);
+    });
+  </script>
+</body>
+</html>

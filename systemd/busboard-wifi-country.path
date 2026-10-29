@@ -1,0 +1,11 @@
+[Unit]
+Description=BusBoard: re-apply the WiFi country when config.yaml changes
+
+[Path]
+# The admin UI saves config.yaml atomically (write temp file + rename), which
+# PathChanged= sees as the path changing.
+PathChanged=/etc/busboard/config.yaml
+Unit=busboard-wifi-country.service
+
+[Install]
+WantedBy=multi-user.target

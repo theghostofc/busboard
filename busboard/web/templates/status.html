@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block title %}BusBoard - Status{% endblock %}
+{% block content %}
+<style>
+  .line-chip {
+    display: inline-block;
+    padding: 0 0.4rem;
+    margin-left: 2px;
+    border-radius: 4px;
+    background: #b07800;
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 700;
+  }
+</style>
+{#- Public, read-only. Never put secrets (API key, hotspot password) or
+    departures on this page. #}
+
+{%- macro stop_row(label, s) %}
+    <tr>
+      <td>{{ label }}</td>
+      <td>
+        {%- if s.cfg.configured %}
+          <strong>{{ s.cfg.name or s.cfg.id }}</strong>{% if s.cfg.platform %} &middot; Quai {{ s.cfg.platform }}{% endif %}
+          {%- if s.cfg.label %}<div class="td-hint">{{ s.cfg.label }}</div>{% endif %}
+          {%- if s.cfg.lines %}<div class="td-hint">Only lines: {{ s.cfg.lines }}</div>{% endif %}
+          {%- if s.cfg.favourites_set %}<div class="td-hint">Highlighted:
+            {%- for line in s.cfg.favourites_set|sort %} <span class="line-chip">{{ line }}</span>{% endfor %}</div>{% endif %}
+        {%- else %}
+          <span class="status-bad">Not configured</span>
+        {%- endif %}
+      </td>
+      <td>
+        {%- if not s.cfg.configured %}&mdash;
+        {%- elif s.live %}<span class="status-ok">Live</span>
+        {%- elif s.age is not none %}<span class="status-bad">Timetable only</span>
+          <div class="td-hint">last live data {{ (s.age // 60)|int }} min ago{% if s.error %} &middot; {{ s.error }}{% endif %}</div>
+        {%- elif s.error %}<span class="status-bad">No data</span><div class="td-hint">{{ s.error }}</div>
+        {%- else %}Waiting for first update
+        {%- endif %}
+      </td>
+    </tr>
+{%- endmacro %}
+
+<div class="card">
+  <h2>Board</h2>
+  <table>
+    <tr>
+      <td>Display</td>
+      <td colspan="2">{% if display_on %}<span class="status-ok">On</span>{% else %}Off (schedule){% endif %}</td>
+    </tr>
+    {{ stop_row("Direction A", stop_a) }}
+    {{ stop_row("Direction B", stop_b) }}
+    <tr>
+      <td>Update interval</td>
+      <td colspan="2">
+        {%- if pause_reason == "quota" %}<span class="status-bad">Paused - mobiliteit.lu request quota reached</span>
+        {%- elif pause_reason == "auth" %}<span class="status-bad">Paused - API key rejected</span>
+        {%- elif pause_reason == "limit" %}<span class="status-bad">Paused - request budget used up</span>
+        {%- else %}every {{ poll_interval|round|int }} s
+        {%- endif %}
+      </td>
+    </tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Network</h2>
+  <table>
+    <tr>
+      <td>WiFi</td>
+      <td>{% if connectivity.wifi_connected %}<span class="status-ok">{{ connectivity.wifi_ssid }}</span>{% else %}Not connected{% endif %}</td>
+    </tr>
+    <tr>
+      <td>Ethernet</td>
+      <td>{% if connectivity.ethernet_connected %}<span class="status-ok">Connected</span>{% else %}Not connected{% endif %}</td>
+    </tr>
+    <tr>
+      <td>Internet</td>
+      <td>{% if connectivity.internet_reachable %}<span class="status-ok">Reachable</span>{% else %}<span class="status-bad">Not reachable</span>{% endif %}</td>
+    </tr>
+    <tr>
+      <td>Saved WiFi networks</td>
+      <td>
+        {%- if report.saved_networks == 0 %}<span class="status-bad">None</span>
+          <div class="td-hint">The board can't rejoin WiFi on its own. Add a network on the admin WiFi page.</div>
+        {%- elif report.saved_networks > 0 %}{{ report.saved_networks }}
+        {%- else %}&mdash;{% endif %}
+      </td>
+    </tr>
+    <tr>
+      <td>Setup hotspot</td>
+      <td>
+        {%- if connectivity.ap_active %}<span class="status-bad">On</span> &ndash; <strong>{{ report.ap_ssid or config.wifi_ap.ssid }}</strong>
+          <div class="td-hint">Name, password and QR code are shown on the board.</div>
+        {%- elif report.ap_error %}<span class="status-bad">Could not start</span>
+          <div class="td-hint">{{ report.ap_error }}</div>
+        {%- else %}Off
+        {%- endif %}
+      </td>
+    </tr>
+    <tr>
+      <td>Network watchdog</td>
+      <td>
+        {%- if watchdog_running %}<span class="status-ok">Running</span>{% if report.note %} &ndash; {{ report.note }}{% endif %}
+        {%- else %}<span class="status-bad">Not reporting</span>
+        {%- endif %}
+      </td>
+    </tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2>mobiliteit.lu API</h2>
+  <table>
+    <tr>
+      <td>API key</td>
+      <td>{% if api_key_set %}<span class="status-ok">Configured</span>{% else %}<span class="status-bad">Not configured</span>{% endif %}</td>
+    </tr>
+    <tr>
+      <td>Admin password</td>
+      <td>{% if initial_password_in_use %}<span class="status-bad">Still the generated one</span>
+        <div class="td-hint">It's shown on the board until you change it on the Account page.</div>
+        {%- else %}<span class="status-ok">Set</span>{% endif %}</td>
+    </tr>
+    <tr><td>Requests this hour</td><td>{{ usage.hour_count }} / {{ usage.hour_limit }}</td></tr>
+    <tr><td>Requests today</td><td>{{ usage.day_count }} / {{ usage.day_limit }}</td></tr>
+  </table>
+</div>
+
+{%- if not logged_in %}
+<p class="muted" style="text-align:center;">
+  <a href="{{ url_for('admin_login') }}">Log in</a> to change stops, WiFi and other settings.
+</p>
+{%- endif %}
+{% endblock %}

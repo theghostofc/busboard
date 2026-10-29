@@ -1,0 +1,30 @@
+[Unit]
+Description=BusBoard connectivity watchdog (self-healing WiFi, fallback AP)
+After=network.target NetworkManager.service busboard-wifi-import.service
+Wants=network.target NetworkManager.service
+
+[Service]
+Type=simple
+User=busboard
+Group=busboard
+WorkingDirectory=/opt/busboard
+Environment=BUSBOARD_CONFIG_DIR=/etc/busboard
+Environment=BUSBOARD_STATE_DIR=/var/lib/busboard
+Environment=BUSBOARD_RUNTIME_DIR=/run/busboard
+Environment=PYTHONUNBUFFERED=1
+# /run/busboard (tmpfs) holds network_status.json, read by busboard-web.
+# Shared by both units; Preserve=yes so restarting one doesn't wipe it.
+RuntimeDirectory=busboard
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+ExecStart=/opt/busboard/.venv/bin/python -m busboard.netwatch.main
+Restart=always
+RestartSec=3
+# nmcli, `systemctl restart NetworkManager` and `systemctl reboot` are
+# authorized through polkit (systemd/polkit-busboard-nm.rules), not by
+# running as root, so NoNewPrivileges is fine here.
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

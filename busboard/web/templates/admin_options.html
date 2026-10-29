@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}BusBoard - Options{% endblock %}
+{% block content %}
+{%- set d = config.display %}
+{%- macro seg(name, current, choices) %}
+  <div class="seg" role="radiogroup">
+    {%- for value, label in choices %}
+    <label><input type="radio" name="{{ name }}" value="{{ value }}"{% if current == value %} checked{% endif %}><span>{{ label }}</span></label>
+    {%- endfor %}
+  </div>
+{%- endmacro %}
+{%- macro toggle(name, checked, title, hint) %}
+  <div class="toggle-row">
+    <div>
+      <div class="toggle-text">{{ title }}</div>
+      <div class="field-hint">{{ hint }}</div>
+    </div>
+    <label class="switch" aria-label="{{ title }}">
+      <input type="checkbox" name="{{ name }}"{% if checked %} checked{% endif %}><span class="track"></span>
+    </label>
+  </div>
+{%- endmacro %}
+
+<style>
+  /* Live preview of one departure row, in the board's own colours. */
+  .preview { border-radius: 6px; overflow: hidden; margin: 0.5rem 0 0.25rem; border: 1px solid var(--border); }
+  .preview[data-board="dark"]  { --p-bg: #0a0c12; --p-text: #ebede0; --p-muted: #8c929e; --p-sched: #c28040; --p-late: #eb5e3c; --p-leave: #2563eb; }
+  .preview[data-board="light"] { --p-bg: #f0f2f6; --p-text: #0f1117; --p-muted: #4a5066; --p-sched: #a05c10; --p-late: #c0420e; --p-leave: #1d4ed8; }
+  .p-row { display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: var(--p-bg); color: var(--p-text); font-family: system-ui, sans-serif; }
+  .p-badge { background: #752864; color: #fff; border-radius: 6px; padding: 4px 8px; font-weight: 700; min-width: 44px; text-align: center; }
+  .p-dest { flex: 1; min-width: 0; }
+  .p-dest-line { display: flex; align-items: center; gap: 4px; font-weight: 600; font-size: 0.9rem; }
+  .p-dest svg.p-acc { width: 17px; height: 17px; fill: var(--p-muted); }
+  .p-leave { display: inline-flex; align-items: center; gap: 3px; margin-top: 3px; padding: 1px 7px 1px 5px; border-radius: 10px; background: var(--p-leave); color: #fff; font-size: 0.72rem; font-weight: 700; }
+  .p-leave svg { width: 12px; height: 12px; fill: currentColor; }
+  .p-leave.icon { margin-top: 0; width: 20px; height: 20px; padding: 0; justify-content: center; border-radius: 50%; }
+  .p-time { text-align: right; }
+  .p-main { font-size: 1.15rem; font-weight: 700; color: var(--p-late); white-space: nowrap; }
+  .p-sub { font-size: 0.78rem; color: var(--p-sched); white-space: nowrap; }
+  .p-delay { display: inline-block; background: var(--p-late); color: #fff; border-radius: 4px; padding: 1px 5px; font-size: 0.72rem; font-weight: 700; margin-left: 3px; }
+  .p-ampm { font-size: 0.55em; margin-left: 2px; }
+  .opt-block { margin-top: 1rem; }
+  .opt-block > .toggle-text { font-weight: 600; font-size: 0.9rem; margin-bottom: 0.3rem; }
+</style>
+
+<form method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  <div class="card">
+    <h2>Board display</h2>
+    <div class="field-hint">Preview (a bus 3 minutes late, with "Leave now" showing):</div>
+    <div class="preview" id="preview" data-board="{{ config.theme if config.theme in ('light', 'dark') else board_auto_theme }}">
+      <div class="p-row">
+        <div class="p-badge">10</div>
+        <div class="p-dest">
+          <div class="p-dest-line" id="p-dest-line">Bertrange, Belle-Etoile</div>
+          <div id="p-leave-slot"></div>
+        </div>
+        <div class="p-time" id="p-time"></div>
+      </div>
+    </div>
+
+    <label for="theme">Theme</label>
+    <p class="field-hint">Auto is light by day and dark at night (sunrise/sunset at your stop). The admin pages' theme button offers the same three choices.</p>
+    <select id="theme" name="theme">
+      <option value="auto"  {% if config.theme == "auto"  %}selected{% endif %}>Auto — light by day, dark at night</option>
+      <option value="light" {% if config.theme == "light" %}selected{% endif %}>Light</option>
+      <option value="dark"  {% if config.theme == "dark"  %}selected{% endif %}>Dark</option>
+    </select>
+
+    <div class="opt-block">
+      <div class="toggle-text">Departure time</div>
+      {{ seg("time_display_mode", d.time_display_mode, [("clock", "Clock time"), ("minutes", "Minutes to go"), ("both", "Both")]) }}
+    </div>
+    <div class="opt-block">
+      <div class="toggle-text">Clock format</div>
+      {{ seg("clock_format", d.clock_format, [("24h", "24-hour"), ("12h", "12-hour (AM/PM)")]) }}
+      <div class="field-hint">Applies to every clock time on the board, including the clock at the top.</div>
+    </div>
+
+    <div class="opt-block">
+      {{ toggle("show_accessibility", d.show_accessibility, "Wheelchair-accessible icon", "Marks step-free journeys. Off by default: nearly all buses in Luxembourg are accessible.") }}
+    </div>
+
+    <h3 style="margin-top:1.25rem;" id="leave-now">Leave now</h3>
+    <p class="field-hint">
+      For each line, the next bus you can still reach gets a badge from
+      <em>walking time + margin</em> until <em>walking time</em> before it leaves
+      (using real-time delays). Walking time and which lines get the badge are set
+      per stop: <a href="{{ url_for('admin_stops') }}#stop_a_leave">Stops &rsaquo; Direction A</a>,
+      <a href="{{ url_for('admin_stops') }}#stop_b_leave">Stops &rsaquo; Direction B</a>.
+    </p>
+    <div class="opt-block">
+      <div class="toggle-text">"Leave now" badge</div>
+      {{ seg("leave_now_style", d.leave_now_style, [("off", "Off"), ("icon", "Icon"), ("text", "Icon and text")]) }}
+    </div>
+    <label for="leave_now_margin_minutes">"Leave now" margin (minutes)</label>
+    <p class="field-hint">How early the badge appears before you'd have to leave. Same for both stops.</p>
+    <input type="number" id="leave_now_margin_minutes" name="leave_now_margin_minutes" min="0" max="10" step="1" value="{{ d.leave_now_margin_minutes }}">
+  </div>
+
+
+  <div class="card">
+    <h2>Screen</h2>
+      {{ toggle("show_ip_address", d.show_ip_address, "IP address under the clock", "Makes it easy to find these admin pages from the board.") }}
+      {{ toggle("rotate_180", d.rotate_180, "Rotate 180°", "For panels mounted upside down (e.g. for cable routing).") }}
+  </div>
+
+  <div class="card">
+    <h2>API &amp; Polling</h2>
+    <p class="muted">
+      The mobiliteit.lu API key is set on the <a href="{{ url_for('admin_api_key') }}">API Key</a> page.
+      Lower the hourly/daily limits below the documented defaults (500/hour,
+      5000/day) if you'd rather leave headroom for other uses of your key.
+    </p>
+    <label for="poll_interval_seconds">Minimum poll interval (seconds)</label>
+    <input type="number" id="poll_interval_seconds" name="poll_interval_seconds" min="10" value="{{ config.api.poll_interval_seconds }}">
+    <label for="duration_minutes">Look-ahead window (minutes)</label>
+    <input type="number" id="duration_minutes" name="duration_minutes" min="1" max="1439" value="{{ config.api.duration_minutes }}">
+    <label for="max_journeys">Departures shown per stop</label>
+    <input type="number" id="max_journeys" name="max_journeys" min="1" value="{{ config.api.max_journeys }}">
+    <label for="hourly_limit">Hourly request budget</label>
+    <input type="number" id="hourly_limit" name="hourly_limit" min="1" value="{{ config.api.hourly_limit }}">
+    <label for="daily_limit">Daily request budget</label>
+    <input type="number" id="daily_limit" name="daily_limit" min="1" value="{{ config.api.daily_limit }}">
+  </div>
+
+  <button type="submit">Save</button>
+</form>
+
+<script>
+(function () {
+  "use strict";
+  var AUTO_BOARD = {{ board_auto_theme|tojson }};
+  var WALK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.5 5.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM9.8 8.9 7 23h2.1l1.8-8 2.1 2v6h2v-7.5l-2.1-2 .6-3A7.3 7.3 0 0 0 19 13v-2a5.1 5.1 0 0 1-4.4-2.5l-1-1.6A2 2 0 0 0 12 6c-.3 0-.5 0-.8.1L6 8.3V13h2V9.6l1.8-.7"/></svg>';
+  var ACC = '<svg class="p-acc" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="4" r="2"/><path d="M19 13v-2c-1.54.02-3.09-.75-4.07-1.83l-1.29-1.43c-.17-.19-.38-.34-.61-.45-.01 0-.01-.01-.02-.01H13c-.35-.2-.75-.3-1.19-.26C10.76 7.11 10 8.04 10 9.09V15c0 1.1.9 2 2 2h5v5h2v-5.5c0-1.1-.9-2-2-2h-3v-3.45c1.29 1.07 3.25 1.94 5 1.95zm-6.17 5c-.41 1.16-1.52 2-2.83 2-1.66 0-3-1.34-3-3 0-1.31.84-2.41 2-2.83V12.1c-2.28.46-4 2.48-4 4.9 0 2.76 2.24 5 5 5 2.42 0 4.44-1.72 4.9-4h-2.07z"/></svg>';
+  var form = document.querySelector("form");
+
+  function val(name) {
+    var el = form.querySelector('[name="' + name + '"]:checked') || form.querySelector('[name="' + name + '"]');
+    return el ? (el.type === "checkbox" ? el.checked : el.value) : null;
+  }
+  function clock(hhmm) {
+    if (val("clock_format") !== "12h") return hhmm;
+    var h = parseInt(hhmm.slice(0, 2), 10);
+    return ((h % 12) || 12) + ":" + hhmm.slice(3) + '<span class="p-ampm">' + (h < 12 ? "AM" : "PM") + "</span>";
+  }
+
+  // All markup below is static (no user data), so innerHTML is safe here.
+  function render() {
+    var theme = val("theme");
+    document.getElementById("preview").dataset.board = theme === "auto" ? AUTO_BOARD : theme;
+
+    var style = val("leave_now_style");
+    var dest = document.getElementById("p-dest-line");
+    dest.innerHTML = "Bertrange, Belle-Etoile" + (val("show_accessibility") ? ACC : "") +
+      (style === "icon" ? '<span class="p-leave icon">' + WALK + "</span>" : "");
+    document.getElementById("p-leave-slot").innerHTML =
+      style === "text" ? '<span class="p-leave">' + WALK + "Leave now</span>" : "";
+
+    var mode = val("time_display_mode");
+    var delay = '<span class="p-delay">+3\'</span>';
+    var html;
+    if (mode === "minutes") html = '<div class="p-main">7 min</div>';
+    else if (mode === "both") html = '<div class="p-main">7 min</div><div class="p-sub">' + clock("18:07") + delay + "</div>";
+    else html = '<div class="p-main">' + clock("18:07") + '</div><div class="p-sub">' + clock("18:04") + delay + "</div>";
+    document.getElementById("p-time").innerHTML = html;
+  }
+  form.addEventListener("change", render);
+  render();
+})();
+</script>
+{% endblock %}

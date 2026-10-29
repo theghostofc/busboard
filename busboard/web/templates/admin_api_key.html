@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}BusBoard - API Key{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>mobiliteit.lu API Key</h2>
+  <p class="muted">
+    Status: {% if api_key_set %}<span class="status-ok">configured</span>{% else %}<span class="status-bad">not set</span>{% endif %}.
+    The key is stored in a file only readable by the BusBoard system user and is never displayed once saved.
+  </p>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label for="api_key">API key</label>
+    <input type="password" id="api_key" name="api_key" autocomplete="off" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" required>
+    <button type="submit">Save</button>
+  </form>
+</div>
+{% endblock %}

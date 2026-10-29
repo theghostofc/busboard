@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BusBoard Login</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #1f2d3d; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+    .card { background: #fff; border-radius: 8px; padding: 2rem; width: 320px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+    h1 { margin-top: 0; font-size: 1.2rem; }
+    label { display: block; margin: 0.75rem 0 0.25rem; font-weight: 600; font-size: 0.9rem; }
+    input { width: 100%; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+    button { width: 100%; margin-top: 1.25rem; background: #2563eb; color: #fff; border: none; padding: 0.6rem; border-radius: 4px; cursor: pointer; }
+    .flash { padding: 0.6rem 1rem; border-radius: 4px; margin-bottom: 0.75rem; font-size: 0.9rem; background: #fee2e2; color: #991b1b; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>BusBoard admin login</h1>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="flash">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label for="username">Username</label>
+      <input type="text" id="username" name="username" autocomplete="username" required>
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" autocomplete="current-password" required>
+      <button type="submit">Log in</button>
+    </form>
+    <p style="margin:1rem 0 0;font-size:0.85rem;"><a href="{{ url_for('status') }}">Back to status</a></p>
+  </div>
+</body>
+</html>

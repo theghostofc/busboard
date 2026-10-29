@@ -1,0 +1,28 @@
+[Unit]
+Description=BusBoard board + setup web UI
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=busboard
+Group=busboard
+WorkingDirectory=/opt/busboard
+Environment=BUSBOARD_CONFIG_DIR=/etc/busboard
+Environment=BUSBOARD_STATE_DIR=/var/lib/busboard
+Environment=BUSBOARD_RUNTIME_DIR=/run/busboard
+Environment=PYTHONUNBUFFERED=1
+RuntimeDirectory=busboard
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+ExecStart=/opt/busboard/.venv/bin/python -m busboard.web.main
+Restart=always
+RestartSec=3
+# The admin WiFi page calls nmcli; the needed NetworkManager actions are
+# granted to the busboard user by systemd/polkit-busboard-nm.rules, so this
+# service intentionally does NOT run as root.
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

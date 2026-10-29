@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}BusBoard - Schedule{% endblock %}
+{% block content %}
+{#- Native time inputs show the browser's own 12/24-hour format, which the
+    page can't control - so times are picked from a quarter-hour list
+    labelled in the board's clock format (Options > Clock format). #}
+{%- set twelve = config.display.clock_format == "12h" %}
+{%- macro time_select(id, value) %}
+  <select id="{{ id }}" name="{{ id }}" class="time-select">
+    {%- for h in range(24) %}{% for m in (0, 15, 30, 45) %}
+    {%- set v = "%02d:%02d"|format(h, m) %}
+    <option value="{{ v }}"{% if v == value %} selected{% endif %}>
+      {%- if twelve %}{{ (h % 12) or 12 }}:{{ "%02d"|format(m) }} {{ "AM" if h < 12 else "PM" }}{% else %}{{ v }}{% endif -%}
+    </option>
+    {%- endfor %}{% endfor %}
+  </select>
+{%- endmacro %}
+<style>
+  .zone { padding: 0.9rem 0; border-top: 1px solid var(--border); }
+  .zone:first-of-type { border-top: none; }
+  .zone-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+  .zone-title { font-weight: 600; font-size: 0.95rem; }
+  .zone-summary { font-weight: normal; color: var(--text-muted); font-size: 0.82rem; margin-left: 0.4rem; }
+  .zone-body { margin-top: 0.6rem; }
+  .zone:not(.on) .zone-body { display: none; }
+  .zone-times { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+  .zone-times .time-select { width: auto; min-width: 7rem; padding: 0.4rem 0.5rem; font-size: 0.95rem; }
+  .zone-times .arrow { color: var(--text-muted); }
+  /* On / Off as small coloured pills - noticeable, not large. */
+  .card .zone-times label.when {
+    margin: 0; padding: 0.15rem 0.55rem; border-radius: 999px;
+    font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .when-on  { background: var(--flash-ok-bg);  color: var(--flash-ok-fg); }
+  .when-off { background: var(--flash-err-bg); color: var(--flash-err-fg); }
+  .zone-days { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; flex-wrap: wrap; margin-top: 0.6rem; }
+  .presets { display: flex; gap: 0.7rem; }
+</style>
+
+<div class="card">
+  <h2>Display schedule</h2>
+  <p class="muted">
+    Outside these windows the screen is switched off and no API requests are
+    made. If no window is on, the board is always on. Times are in 15-minute
+    steps, shown in the <a href="{{ url_for('admin_options') }}">clock format</a> set in Options;
+    a window ending before it starts (e.g. {{ "10:00 PM &rarr; 2:00 AM"|safe if twelve else "22:00 &rarr; 02:00"|safe }})
+    runs past midnight and belongs to the day it starts.
+  </p>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {%- for zone in config.schedule.zones %}
+    {%- set i = loop.index0 %}
+    <div class="zone{% if zone.enabled %} on{% endif %}" data-zone="{{ i }}">
+      <div class="zone-head">
+        <div class="zone-title">Window {{ loop.index }}
+          <span class="zone-summary" data-summary>{% if not zone.enabled %}off{% endif %}</span>
+        </div>
+        <label class="switch" aria-label="Window {{ loop.index }} on/off">
+          <input type="checkbox" name="zone_{{ i }}_enabled" data-enable{% if zone.enabled %} checked{% endif %}><span class="track"></span>
+        </label>
+      </div>
+      <div class="zone-body">
+        <div class="zone-times">
+          <label for="zone_{{ i }}_on" class="when when-on">On</label>
+          {{ time_select("zone_" ~ i ~ "_on", zone.on_time) }}
+          <span class="arrow">&rarr;</span>
+          <label for="zone_{{ i }}_off" class="when when-off">Off</label>
+          {{ time_select("zone_" ~ i ~ "_off", zone.off_time) }}
+        </div>
+        <div class="zone-days">
+          <div class="chips" role="group" aria-label="Days for window {{ loop.index }}">
+            {%- for name in day_names %}
+            <label class="chip"><input type="checkbox" name="zone_{{ i }}_days" value="{{ loop.index0 }}"{% if loop.index0 in zone.days %} checked{% endif %}><span>{{ name }}</span></label>
+            {%- endfor %}
+          </div>
+          <div class="presets">
+            <button type="button" class="link-btn" data-days="0,1,2,3,4">Weekdays</button>
+            <button type="button" class="link-btn" data-days="5,6">Weekends</button>
+            <button type="button" class="link-btn" data-days="0,1,2,3,4,5,6">Every day</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    {%- endfor %}
+    <button type="submit">Save</button>
+  </form>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var NAMES = {{ day_names|tojson }};
+
+  function daysLabel(days) {
+    var key = days.join(",");
+    if (key === "0,1,2,3,4,5,6") return "every day";
+    if (key === "0,1,2,3,4") return "weekdays";
+    if (key === "5,6") return "weekends";
+    if (!days.length) return "no days selected";
+    return days.map(function (d) { return NAMES[d]; }).join(", ");
+  }
+
+  document.querySelectorAll(".zone").forEach(function (zone) {
+    var enable = zone.querySelector("[data-enable]");
+    var summary = zone.querySelector("[data-summary]");
+    var chips = zone.querySelectorAll('.chip input');
+
+    function update() {
+      zone.classList.toggle("on", enable.checked);
+      if (!enable.checked) { summary.textContent = "off"; return; }
+      var days = [];
+      chips.forEach(function (c) { if (c.checked) days.push(parseInt(c.value, 10)); });
+      var on = zone.querySelector('select[name$="_on"]'), off = zone.querySelector('select[name$="_off"]');
+      summary.textContent = on.options[on.selectedIndex].text + " \u2192 " +
+        off.options[off.selectedIndex].text + ", " + daysLabel(days);
+    }
+
+    zone.querySelectorAll("[data-days]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var want = btn.dataset.days.split(",");
+        chips.forEach(function (c) { c.checked = want.indexOf(c.value) !== -1; });
+        update();
+      });
+    });
+    zone.addEventListener("change", update);
+    update();
+  });
+})();
+</script>
+{% endblock %}

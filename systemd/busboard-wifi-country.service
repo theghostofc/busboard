@@ -1,0 +1,12 @@
+[Unit]
+Description=BusBoard: apply the WiFi country from config.yaml
+After=NetworkManager.service
+Before=busboard-netwatch.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/busboard-wifi-country /etc/busboard/config.yaml LU
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target

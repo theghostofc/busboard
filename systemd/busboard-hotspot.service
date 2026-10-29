@@ -1,0 +1,14 @@
+[Unit]
+Description=BusBoard WPA2 setup hotspot (hostapd)
+Documentation=file:///opt/busboard/docs/ARCHITECTURE.md
+# Never enabled: started and stopped only by busboard-netwatch (via polkit)
+# when the board has no network link.
+After=NetworkManager.service
+Conflicts=hostapd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/busboard-hotspot run
+ExecStopPost=/usr/local/sbin/busboard-hotspot cleanup
+Restart=no
+TimeoutStopSec=15

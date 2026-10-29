@@ -1,0 +1,842 @@
+<!doctype html>
+<html lang="en" data-theme="{{ initial.theme }}"{% if initial.rotate_180 %} class="rotated"{% endif %}>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BusBoard</title>
+  {#- No meta refresh on purpose: the page fetches /api/board in the
+      background and updates itself. A full reload every poll used to cost a
+      complete software (pixman) repaint on the Pi, and if the server was
+      restarting at that moment Chromium got stuck on its error page, which
+      has no refresh timer. #}
+  <style>
+    /* ── Colour tokens ────────────────────────────────────────────────── */
+    :root,
+    [data-theme="dark"] {
+      --bg:          #0a0c12;
+      --surface:     #181c26;
+      --surface-mid: #0f1320;
+      --border:      #3c404a;
+      --row-border:  #1a1e28;
+      --text:        #ebede0;
+      --text-muted:  #8c929e;
+      --badge-bg:    #752864;
+      --on-time:     #56c478;
+      --delayed:     #eb5e3c;
+      --cancelled:   #c83c3c;
+      --sched-color: #c28040;
+      --warn-bg:     #781e1e;
+      --warn-fg:     #ffeaea;
+      --empty-color: #8c929e;
+      --fav-bg:      #1e1a0a;
+      --fav-badge-bg:#b07800;
+      --alert-bg:    #4a1414;
+      --alert-fg:    #ffecec;
+      --alert-accent:#eb5e3c;
+      --notice-bg:   #33290a;
+      --notice-fg:   #ffe9b0;
+      --notice-accent:#f0a500;
+      --leave-bg:    #2563eb;
+      --leave-fg:    #ffffff;
+      --mark-bg:     #f0a500;
+      --mark-fg:     #1a1300;
+    }
+
+    [data-theme="light"] {
+      --bg:          #f0f2f6;
+      --surface:     #e8eaf0;
+      --surface-mid: #dde0ea;
+      --border:      #b0b8cc;
+      --row-border:  #d0d4e0;
+      --text:        #0f1117;
+      --text-muted:  #4a5066;
+      --badge-bg:    #752864;
+      --on-time:     #1a7a38;
+      --delayed:     #c0420e;
+      --cancelled:   #b02020;
+      --sched-color: #a05c10;
+      --warn-bg:     #fde8e8;
+      --warn-fg:     #7a1010;
+      --empty-color: #5a6080;
+      --fav-bg:      #fffae8;
+      --fav-badge-bg:#b07800;
+      --alert-bg:    #fde8e8;
+      --alert-fg:    #6b0f0f;
+      --alert-accent:#c0420e;
+      --notice-bg:   #fff3cf;
+      --notice-fg:   #4a3500;
+      --notice-accent:#b07800;
+      --leave-bg:    #1d4ed8;
+      --leave-fg:    #ffffff;
+      --mark-bg:     #b07800;
+      --mark-fg:     #ffffff;
+    }
+
+    /* ── Reset & base ─────────────────────────────────────────────────── */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    /* Fill the panel exactly (800x600 today) with no scrollbars; long
+       text is ellipsised rather than widening the page. */
+    html, body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+    }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, sans-serif;
+      display: flex;
+      flex-direction: column;
+      cursor: none;
+    }
+
+    /* ── Top bar ──────────────────────────────────────────────────────── */
+    .topbar {
+      flex-shrink: 0;
+      display: flex;
+    }
+    /* The border sits on each header cell so it's visible over the
+       surface background — not on the topbar wrapper itself */
+    .col-header {
+      flex: 1;
+      background: var(--surface);
+      padding: 0 12px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      overflow: hidden;
+      min-height: 64px;
+      border-bottom: 2px solid var(--border);
+    }
+    .col-header .stop-name {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.3;
+    }
+    .col-header .towards {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-top: 3px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    /* Arrow indicator before the towards text */
+    .col-header .towards:not(:empty)::before {
+      content: "→ ";
+      opacity: 0.6;
+    }
+    .clock-cell {
+      width: 110px;
+      flex-shrink: 0;
+      background: var(--surface-mid);
+      border-left: 2px solid var(--border);
+      border-right: 2px solid var(--border);
+      border-bottom: 2px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+    }
+    .clock-time {
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: 1px;
+      line-height: 1;
+    }
+    .clock-date {
+      font-size: 0.68rem;
+      color: var(--text-muted);
+    }
+    .clock-ip {
+      font-size: 0.6rem;
+      color: var(--text-muted);
+      opacity: 0.8;
+      margin-top: 1px;
+    }
+
+    /* ── Board area ───────────────────────────────────────────────────── */
+    .board {
+      flex: 1;
+      display: flex;
+      min-height: 0;   /* allow flex children to shrink below content size */
+      overflow: hidden;
+    }
+    .column {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+    }
+    /* Divider only spans actual row cells — not the spacer below */
+    .column:first-child .row {
+      border-right: 2px solid var(--border);
+    }
+
+    .rows {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+    }
+    /* Each row is exactly 1/--rows of the column, so a full column fills
+       the height (with or without the notice bar). With fewer departures
+       the spacer below takes the rest. */
+    .rows { --rows: 8; }
+    .row {
+      flex: 0 0 calc(100% / var(--rows));
+      min-height: 0;
+      display: flex;
+      align-items: center;
+      padding: 0 10px;
+      gap: 8px;
+      border-bottom: 1px solid var(--row-border);
+    }
+    /* Remove trailing border — the spacer div that follows is not a row */
+    .row:has(+ .rows-spacer) { border-bottom: none; }
+    .rows-spacer { flex: 1; }
+
+    /* ── Favourite row highlight ──────────────────────────────────────── */
+    .row--favourite {
+      border-left: 3px solid #f0a500;
+      background: var(--fav-bg);
+    }
+    .row--favourite .badge {
+      background: var(--fav-badge-bg);
+    }
+
+    /* ── Row contents ─────────────────────────────────────────────────── */
+    .badge {
+      background: var(--badge-bg);
+      color: #fff;
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 1rem;
+      font-weight: 700;
+      min-width: 44px;
+      text-align: center;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .dest-block {
+      flex: 1;
+      overflow: hidden;
+      min-width: 0;
+    }
+    .dest {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* ── Time block ───────────────────────────────────────────────────── */
+    .time-block {
+      text-align: right;
+      flex-shrink: 0;
+      margin-left: auto;
+    }
+    .time-main {
+      font-size: 1.15rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .time-main.on-time   { color: var(--on-time); }
+    .time-main.delayed   { color: var(--delayed); }
+    .time-main.cancelled { color: var(--cancelled); }
+
+    .time-sched {
+      font-size: 0.78rem;
+      color: var(--sched-color);
+      white-space: nowrap;
+      letter-spacing: 0.01em;
+    }
+    .delay-badge {
+      display: inline-block;
+      background: var(--delayed);
+      color: #fff;
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      margin-left: 3px;
+      vertical-align: middle;
+    }
+
+    /* ── Empty / error state ──────────────────────────────────────────── */
+    .empty {
+      padding: 16px 10px;
+      color: var(--empty-color);
+      font-size: 0.85rem;
+    }
+
+    /* ── Self-updating board additions ───────────────────────────────── */
+    html.rotated { transform: rotate(180deg); }
+    .badge { position: relative; }
+    /* "!" marker on a line with a service message */
+    .badge .mark {
+      position: absolute;
+      top: -6px;
+      right: -6px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--mark-bg);
+      color: var(--mark-fg);
+      font-size: 0.7rem;
+      line-height: 16px;
+      font-weight: 800;
+      text-align: center;
+    }
+    .dest { display: flex; align-items: center; gap: 4px; }
+    .dest .dest-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .dest svg { flex-shrink: 0; width: 17px; height: 17px; fill: var(--text-muted); }
+    .leave {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      margin-top: 3px;
+      padding: 1px 7px 1px 5px;
+      border-radius: 10px;
+      background: var(--leave-bg);
+      color: var(--leave-fg);
+      font-size: 0.72rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .leave svg { width: 12px; height: 12px; fill: currentColor; }
+    /* Icon-only style: a round badge after the destination. */
+    .leave--icon {
+      flex-shrink: 0;
+      margin-top: 0;
+      width: 20px;
+      height: 20px;
+      padding: 0;
+      justify-content: center;
+      border-radius: 50%;
+    }
+    .leave--icon svg { width: 13px; height: 13px; }
+    /* 12-hour clock: AM/PM in smaller text after the time */
+    .ampm { font-size: 0.55em; font-weight: 700; margin-left: 2px; letter-spacing: 0.02em; }
+    /* Scheduled-only times (no realtime data) use the normal text colour;
+       green means realtime data confirms "on time". */
+    .time-main.planned { color: var(--text); }
+    .row--cancelled .badge { opacity: 0.55; }
+    .row--cancelled .dest-text { text-decoration: line-through; color: var(--text-muted); }
+    .chip-cancelled {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 6px;
+      border: 1.5px solid var(--cancelled);
+      color: var(--cancelled);
+      font-size: 0.85rem;
+      font-weight: 700;
+    }
+    .timetable-tag {
+      font-size: 0.66rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    /* ── Notice bar: outages (alert) and service messages (notice) ────── */
+    .notice {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      border-left: 6px solid transparent;
+      font-size: 0.88rem;
+      line-height: 1.25;
+      max-height: 3.4em;
+      overflow: hidden;
+    }
+    .notice[hidden], .screen-off[hidden] { display: none; }
+    .notice.alert  { background: var(--alert-bg);  color: var(--alert-fg);  border-left-color: var(--alert-accent); }
+    .notice.info   { background: var(--notice-bg); color: var(--notice-fg); border-left-color: var(--notice-accent); }
+    .notice .icon {
+      flex-shrink: 0;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      font-weight: 800;
+      font-size: 0.9rem;
+      line-height: 22px;
+      text-align: center;
+      color: #fff;
+    }
+    .notice.alert .icon { background: var(--alert-accent); }
+    .notice.info .icon  { background: var(--notice-accent); }
+    .notice .text {
+      flex: 1;
+      min-width: 0;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .notice .count { flex-shrink: 0; font-size: 0.72rem; opacity: 0.8; }
+    .screen-off { position: fixed; inset: 0; background: #000; z-index: 10; }
+
+    /* ── Setup hotspot panel (replaces the columns while the hotspot is on) */
+    .hotspot {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      padding: 12px 20px;
+      text-align: center;
+    }
+    .hotspot[hidden], .board[hidden], .step-detail[hidden] { display: none; }
+    .hotspot h2 { font-size: 1.25rem; }
+    .hotspot .lead { color: var(--text-muted); font-size: 0.9rem; }
+    .hotspot .steps { display: flex; gap: 48px; justify-content: center; }
+    .hotspot .step { display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: 300px; }
+    .hotspot img {
+      width: 190px;
+      height: 190px;
+      background: #fff;
+      padding: 6px;
+      border-radius: 8px;
+    }
+    .hotspot .step-title { font-weight: 700; font-size: 0.95rem; }
+    .hotspot .step-detail { font-size: 0.85rem; color: var(--text-muted); word-break: break-all; }
+    .hotspot code { color: var(--text); font-size: 0.95rem; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="col-header">
+      <div class="stop-name" id="name-a"></div>
+      <div class="towards" id="towards-a"></div>
+    </div>
+    <div class="clock-cell">
+      <div class="clock-time" id="clock">--:--</div>
+      <div class="clock-date" id="clockdate"></div>
+      <div class="clock-ip" id="clockip"></div>
+    </div>
+    <div class="col-header" style="text-align:right;">
+      <div class="stop-name" id="name-b"></div>
+      <div class="towards" id="towards-b"></div>
+    </div>
+  </div>
+
+  <div class="board" id="board">
+    <div class="column">
+      <div class="rows" id="rows-a"></div>
+    </div>
+    <div class="column">
+      <div class="rows" id="rows-b"></div>
+    </div>
+  </div>
+
+  <div class="hotspot" id="hotspot" hidden>
+    <h2>No network connection</h2>
+    <div class="lead">Use a phone to set up WiFi. The board keeps retrying your saved networks.</div>
+    <div class="steps">
+      <div class="step">
+        <img id="hotspot-wifi-qr" alt="QR code to join the setup WiFi">
+        <div class="step-title">1. Scan to join the setup WiFi</div>
+        <div class="step-detail">Network <code id="hotspot-ssid"></code><br>Password <code id="hotspot-password"></code></div>
+      </div>
+      <div class="step">
+        <img id="hotspot-url-qr" alt="QR code to open the setup page">
+        <div class="step-title">2. Scan to open the setup page</div>
+        <div class="step-detail" id="hotspot-url"></div>
+        <div class="step-detail" id="hotspot-admin" hidden>Login <code id="hotspot-admin-user"></code> / <code id="hotspot-admin-password"></code></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="notice" id="notice" role="status" hidden>
+    <div class="icon" id="notice-icon"></div>
+    <div class="text" id="notice-text"></div>
+    <div class="count" id="notice-count"></div>
+  </div>
+  <div class="screen-off" id="screen-off" hidden></div>
+
+  <script>
+  (function () {
+    "use strict";
+
+    var FETCH_EVERY_MS = 15000;       // local JSON only - costs no API quota
+    var FETCH_TIMEOUT_MS = 8000;
+    var FAILURES_BEFORE_NOTICE = 3;
+    var RELOAD_AFTER_MS = 24 * 3600 * 1000;  // keep a long-running Chromium lean
+    var ROTATE_NOTICE_MS = 8000;
+
+    var WALK_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.5 5.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM9.8 8.9 7 23h2.1l1.8-8 2.1 2v6h2v-7.5l-2.1-2 .6-3A7.3 7.3 0 0 0 19 13v-2a5.1 5.1 0 0 1-4.4-2.5l-1-1.6A2 2 0 0 0 12 6c-.3 0-.5 0-.8.1L6 8.3V13h2V9.6l1.8-.7"/></svg>';
+    // Material Icons "accessible" / "directions_walk" (Apache-2.0).
+    var WHEELCHAIR_SVG = '<svg viewBox="0 0 24 24" role="img" aria-label="wheelchair accessible"><circle cx="12" cy="4" r="2"/><path d="M19 13v-2c-1.54.02-3.09-.75-4.07-1.83l-1.29-1.43c-.17-.19-.38-.34-.61-.45-.01 0-.01-.01-.02-.01H13c-.35-.2-.75-.3-1.19-.26C10.76 7.11 10 8.04 10 9.09V15c0 1.1.9 2 2 2h5v5h2v-5.5c0-1.1-.9-2-2-2h-3v-3.45c1.29 1.07 3.25 1.94 5 1.95zm-6.17 5c-.41 1.16-1.52 2-2.83 2-1.66 0-3-1.34-3-3 0-1.31.84-2.41 2-2.83V12.1c-2.28.46-4 2.48-4 4.9 0 2.76 2.24 5 5 5 2.42 0 4.44-1.72 4.9-4h-2.07z"/></svg>';
+
+    var data = {{ initial|tojson }};
+    var appVersion = data.app_version;
+    var failures = 0;
+    var loadedAt = Date.now();
+    var lastRenderKey = "";
+    var lastClock = "";
+    var noticeIndex = 0;
+    var lastNoticeSwitch = Date.now();
+    var lastNoticeKey = null;
+
+    function formatter(opts) {
+      try {
+        return new Intl.DateTimeFormat("en-GB", Object.assign({ timeZone: data.timezone }, opts));
+      } catch (e) {
+        return new Intl.DateTimeFormat("en-GB", opts);
+      }
+    }
+    var fmtClock = formatter({ hour: "2-digit", minute: "2-digit", hour12: false });
+    var fmtDate = formatter({ weekday: "short", day: "numeric", month: "short" });
+
+    // ── Clock format (24h / 12h) ──────────────────────────────────────
+    // Times arrive as "HH:MM" (Luxembourg local); 12h shows "11:58" + small "PM".
+    function clockParts(hhmm) {
+      if (!hhmm || data.clock_format !== "12h") return { t: hhmm || "", ap: "" };
+      var h = parseInt(hhmm.slice(0, 2), 10);
+      return { t: ((h % 12) || 12) + ":" + hhmm.slice(3, 5), ap: h < 12 ? "AM" : "PM" };
+    }
+    function clockNode(tag, cls, hhmm) {
+      var e = el(tag, cls);
+      fillClock(e, hhmm);
+      return e;
+    }
+    function fillClock(e, hhmm) {
+      var p = clockParts(hhmm);
+      e.textContent = p.t;
+      if (p.ap) e.appendChild(el("span", "ampm", p.ap));
+    }
+    function clockText(hhmm) {
+      var p = clockParts(hhmm);
+      return p.ap ? p.t + " " + p.ap : p.t;
+    }
+
+    function el(tag, cls, text) {
+      var e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text !== undefined && text !== null) e.textContent = text;
+      return e;
+    }
+
+    // ── Live vs timetable ─────────────────────────────────────────────
+    // Live times older than live_max_age (>= 2 min) are no use: the stop
+    // switches to "timetable mode" - planned times only, no delays.
+    function isLive(stop, nowMs) {
+      return !!stop.updated_at && failures < FAILURES_BEFORE_NOTICE &&
+        nowMs / 1000 - stop.updated_at < data.live_max_age;
+    }
+
+    function depEpoch(dep, live) {
+      var e = live ? dep.epoch : dep.scheduled_epoch;
+      return e === null || e === undefined ? null : e;
+    }
+
+    function minutesUntil(dep, nowMs, live) {
+      var e = depEpoch(dep, live);
+      if (e === null) return null;
+      return Math.max(Math.floor((e * 1000 - nowMs) / 60000), 0);
+    }
+
+    function departed(dep, nowMs, live) {
+      var e = depEpoch(dep, live);
+      return e !== null && nowMs / 1000 - e >= 60;
+    }
+
+    function visibleDepartures(stop, nowMs, live) {
+      return (stop.departures || []).filter(function (d) { return !departed(d, nowMs, live); });
+    }
+
+    // "Leave now": for each line (+ destination), the next bus you can still
+    // reach gets the badge from walking time + margin down to walking time.
+    // Uses the real-time departure; never shown in timetable mode (delays
+    // unknown) or for cancelled buses. Returns {rowIndex: true}.
+    function leaveEligible(stop, dep) {
+      if (stop.leave_lines !== "highlighted") return true;
+      var favs = stop.favourites || [];
+      return !favs.length || favs.indexOf(dep.line) !== -1;  // none highlighted -> all lines
+    }
+
+    function leaveNowSet(stop, deps, nowMs, live) {
+      var out = {};
+      var walk = (stop.walk_minutes || 0) * 60;
+      var margin = (data.leave_margin || 0) * 60;
+      if (data.leave_style === "off" || walk <= 0 || !live) return out;
+      var seen = {};
+      deps.forEach(function (d, i) {
+        if (d.cancelled || !leaveEligible(stop, d)) return;
+        var key = d.line + "|" + d.direction;
+        if (seen[key]) return;
+        var e = depEpoch(d, true);
+        if (e === null) return;
+        var secs = e - nowMs / 1000;
+        if (secs < walk) return;        // too late for this one; the next of this line counts
+        seen[key] = true;
+        if (secs <= walk + margin) out[i] = true;
+      });
+      return out;
+    }
+
+    // ── Rendering ─────────────────────────────────────────────────────
+    function statusClass(dep, live) {
+      if (!live || !dep.realtime) return "planned";
+      return dep.delayed ? "delayed" : "on-time";
+    }
+
+    function delayBadge(dep) {
+      return el("span", "delay-badge", "+" + dep.delay + "'");
+    }
+
+    function timeBlock(dep, nowMs, live) {
+      var block = el("div", "time-block");
+      if (dep.cancelled) {
+        block.appendChild(el("span", "chip-cancelled", "Cancelled"));
+        return block;
+      }
+      var mode = data.time_mode;
+      var clock = live ? dep.time : dep.scheduled;
+      var showDelay = live && dep.delayed;
+      var mins = minutesUntil(dep, nowMs, live);
+      var minsText = mins === null ? clockText(clock) : (mins > 0 ? mins + " min" : "Due");
+      var cls = "time-main " + statusClass(dep, live);
+      if (mode === "minutes") {
+        block.appendChild(el("div", cls, minsText));
+      } else if (mode === "both") {
+        block.appendChild(el("div", cls, minsText));
+        var sub = clockNode("div", "time-sched", clock);
+        if (showDelay) sub.appendChild(delayBadge(dep));
+        block.appendChild(sub);
+      } else {
+        block.appendChild(clockNode("div", cls, clock));
+        if (showDelay) {
+          var sched = clockNode("div", "time-sched", dep.scheduled);
+          sched.appendChild(delayBadge(dep));
+          block.appendChild(sched);
+        }
+      }
+      return block;
+    }
+
+    function renderHeader(which, stop) {
+      var name = stop.configured ? (stop.name || "") : "Not configured";
+      if (stop.platform) name += " \u00b7 Quai " + stop.platform;
+      document.getElementById("name-" + which).textContent = name;
+      document.getElementById("towards-" + which).textContent = stop.label || "";
+    }
+
+    function renderColumn(which, stop, nowMs) {
+      var live = isLive(stop, nowMs);
+      var rows = document.getElementById("rows-" + which);
+      var frag = document.createDocumentFragment();
+      var deps = visibleDepartures(stop, nowMs, live);
+      var favs = stop.favourites || [];
+      var leaveSet = leaveNowSet(stop, deps, nowMs, live);
+      if (!stop.configured) {
+        frag.appendChild(el("div", "empty", "Stop not configured"));
+      } else if (!deps.length) {
+        var msg = stop.updated_at ? "No upcoming departures" :
+          (stop.error ? "No departures available" : "Loading departures...");
+        frag.appendChild(el("div", "empty", msg));
+      } else {
+        deps.forEach(function (dep, i) {
+          var cls = "row";
+          if (dep.line && favs.indexOf(dep.line) !== -1) cls += " row--favourite";
+          if (dep.cancelled) cls += " row--cancelled";
+          var row = el("div", cls);
+
+          var badge = el("div", "badge", dep.line || "?");
+          if (dep.notices && dep.notices.length) badge.appendChild(el("span", "mark", "!"));
+          row.appendChild(badge);
+
+          var destBlock = el("div", "dest-block");
+          var dest = el("div", "dest");
+          dest.appendChild(el("span", "dest-text", dep.direction || "\u2014"));
+          if (dep.accessible && data.show_accessibility) {
+            var acc = el("span");
+            acc.innerHTML = WHEELCHAIR_SVG;  // static markup, no data
+            dest.appendChild(acc.firstChild);
+          }
+          if (leaveSet[i] && data.leave_style === "icon") {
+            var icon = el("span", "leave leave--icon");
+            icon.title = "Leave now";
+            icon.innerHTML = WALK_SVG;       // static markup, no data
+            dest.appendChild(icon);
+          }
+          destBlock.appendChild(dest);
+          if (leaveSet[i] && data.leave_style === "text") {
+            var leave = el("span", "leave");
+            leave.innerHTML = WALK_SVG;      // static markup, no data
+            leave.appendChild(document.createTextNode("Leave now"));
+            destBlock.appendChild(leave);
+          }
+          row.appendChild(destBlock);
+          row.appendChild(timeBlock(dep, nowMs, live));
+          frag.appendChild(row);
+        });
+      }
+      frag.appendChild(el("div", "rows-spacer"));
+      rows.style.setProperty("--rows", String(data.rows || 8));
+      rows.replaceChildren ? rows.replaceChildren(frag) : (rows.innerHTML = "", rows.appendChild(frag));
+    }
+
+    // ── Notice bar ────────────────────────────────────────────────────
+    // One bar, most important first: our own outages (alert), then the
+    // operator's service messages (notice), rotating if there are several.
+    function currentNotices(nowMs) {
+      var alerts = [];
+      if (failures >= FAILURES_BEFORE_NOTICE) {
+        alerts.push("Board service not responding - showing timetable times");
+      }
+      if (data.hotspot) alerts.push("Setup hotspot is on - still retrying your saved networks");
+      else if (data.warning) alerts.push(data.warning);
+      if (!alerts.length) {
+        var stale = ["stop_a", "stop_b"].map(function (k) { return data[k]; })
+          .filter(function (s) { return s.configured && !isLive(s, nowMs); });
+        if (stale.length) {
+          var since = stale.map(function (s) { return s.updated_at; }).filter(Boolean);
+          var text = "Live times unavailable";
+          if (since.length) text += " since " + clockText(fmtClock.format(new Date(Math.min.apply(null, since) * 1000)));
+          if (data.outage_reason) text += " (" + data.outage_reason + ")";
+          text += " - showing timetable, delays not included";
+          alerts.push(text);
+        }
+      }
+      if (alerts.length) return { kind: "alert", items: alerts };
+      var items = (data.disruptions || []).map(function (d) {
+        return (d.line ? "Line " + d.line + ": " : "") + d.text;
+      });
+      if (data.admin_notice) items.unshift(data.admin_notice);
+      return { kind: "info", items: items };
+    }
+
+    function renderNotice(nowMs) {
+      var n = currentNotices(nowMs);
+      var bar = document.getElementById("notice");
+      if (!n.items.length) {
+        if (lastNoticeKey !== "") { bar.hidden = true; lastNoticeKey = ""; }
+        return;
+      }
+      if (nowMs - lastNoticeSwitch >= ROTATE_NOTICE_MS) {
+        noticeIndex += 1;
+        lastNoticeSwitch = nowMs;
+      }
+      var i = noticeIndex % n.items.length;
+      var key = n.kind + "|" + i + "|" + n.items.length + "|" + n.items[i];
+      if (key === lastNoticeKey) return;
+      lastNoticeKey = key;
+      bar.className = "notice " + n.kind;
+      document.getElementById("notice-icon").textContent = n.kind === "alert" ? "!" : "i";
+      document.getElementById("notice-text").textContent = n.items[i];
+      document.getElementById("notice-count").textContent = n.items.length > 1 ? (i + 1) + "/" + n.items.length : "";
+      bar.hidden = false;
+    }
+
+    function renderStatic() {
+      document.documentElement.setAttribute("data-theme", data.theme);
+      document.documentElement.classList.toggle("rotated", !!data.rotate_180);
+      document.getElementById("screen-off").hidden = data.display_on !== false;
+      document.getElementById("clockip").textContent = data.ip_address || "";
+      renderHeader("a", data.stop_a);
+      renderHeader("b", data.stop_b);
+      renderHotspot();
+    }
+
+    var lastHotspotKey = null;
+    function renderHotspot() {
+      var h = data.hotspot;
+      var key = h ? [h.ssid, h.password, h.url, h.admin_password].join("|") : "";
+      if (key === lastHotspotKey) return;
+      lastHotspotKey = key;
+      document.getElementById("hotspot").hidden = !h;
+      document.getElementById("board").hidden = !!h;
+      if (!h) return;
+      document.getElementById("hotspot-wifi-qr").src = h.wifi_qr;  // data: URI generated server-side
+      document.getElementById("hotspot-url-qr").src = h.url_qr;
+      document.getElementById("hotspot-ssid").textContent = h.ssid;
+      document.getElementById("hotspot-password").textContent = h.password || "(none)";
+      document.getElementById("hotspot-url").textContent = h.url;
+      document.getElementById("hotspot-admin").hidden = !h.admin_password;
+      document.getElementById("hotspot-admin-user").textContent = h.admin_user || "";
+      document.getElementById("hotspot-admin-password").textContent = h.admin_password || "";
+    }
+
+    function renderKey(nowMs) {
+      // Only touch the DOM when something visible changes - repaints are
+      // the main CPU cost on the Pi (software rendering).
+      var parts = [data.generated_at, failures >= FAILURES_BEFORE_NOTICE];
+      ["stop_a", "stop_b"].forEach(function (k) {
+        var s = data[k];
+        var live = isLive(s, nowMs);
+        parts.push(live);
+        var deps = visibleDepartures(s, nowMs, live);
+        deps.forEach(function (d) { parts.push(minutesUntil(d, nowMs, live)); });
+        parts.push("L" + Object.keys(leaveNowSet(s, deps, nowMs, live)).join("."));
+      });
+      return parts.join(",");
+    }
+
+    function tick(force) {
+      var now = new Date();
+      var nowMs = now.getTime();
+      var hhmm = fmtClock.format(now) + data.clock_format;
+      if (hhmm !== lastClock) {
+        lastClock = hhmm;
+        fillClock(document.getElementById("clock"), fmtClock.format(now));
+      }
+      document.getElementById("clockdate").textContent = fmtDate.format(now);
+      var key = renderKey(nowMs);
+      if (force || key !== lastRenderKey) {
+        lastRenderKey = key;
+        renderColumn("a", data.stop_a, nowMs);
+        renderColumn("b", data.stop_b, nowMs);
+      }
+      renderNotice(nowMs);
+    }
+
+    function refresh() {
+      var ctrl = window.AbortController ? new AbortController() : null;
+      var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, FETCH_TIMEOUT_MS);
+      fetch("/api/board", { cache: "no-store", signal: ctrl ? ctrl.signal : undefined })
+        .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+        .then(function (json) {
+          clearTimeout(timer);
+          failures = 0;
+          if (json.app_version !== appVersion || Date.now() - loadedAt > RELOAD_AFTER_MS) {
+            // New server code, or a day has passed - reload while we know
+            // the server is answering.
+            window.location.reload();
+            return;
+          }
+          data = json;
+          renderStatic();
+          tick(true);
+        })
+        .catch(function () {
+          clearTimeout(timer);
+          failures += 1;
+          tick(false);
+        })
+        .then(function () { setTimeout(refresh, FETCH_EVERY_MS); });
+    }
+
+    renderStatic();
+    tick(true);
+    setInterval(function () { tick(false); }, 1000);
+    setTimeout(refresh, FETCH_EVERY_MS);
+  })();
+  </script>
+</body>
+</html>

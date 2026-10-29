@@ -1,0 +1,59 @@
+[Unit]
+Description=BusBoard kiosk display (Chromium departure board)
+After=systemd-user-sessions.service systemd-logind.service network.target busboard-web.service seatd.service
+Wants=network.target busboard-web.service seatd.service
+
+[Service]
+Type=simple
+User=planner
+WorkingDirectory=/home/planner
+# cage is a minimal Wayland compositor that takes over the DRM/KMS device
+# directly, giving Chromium a Wayland session without a full desktop.
+# seatd manages seat access so cage can open /dev/dri/card0 as a non-root user.
+Environment=WLR_RENDERER=pixman
+Environment=WLR_BACKENDS=drm
+Environment=LIBSEAT_BACKEND=seatd
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+# Ensure /run/user/1000 exists before cage tries to create its Wayland socket.
+# Combined with `loginctl enable-linger planner` this guarantees the directory
+# is present at boot without needing an interactive login session.
+ExecStartPre=/bin/bash -c 'mkdir -p /run/user/1000 && chown planner:planner /run/user/1000 && chmod 700 /run/user/1000'
+# Wait (up to 60s) until the web service accepts connections, instead of a
+# fixed sleep, so Chromium never opens on an error page at boot.
+ExecStartPre=/bin/bash -c 'for i in $(seq 60); do (exec 3<>/dev/tcp/127.0.0.1/8080) 2>/dev/null && exit 0; sleep 1; done; exit 0'
+# Chromium flags, chosen for a 1 GB Pi 3B+ drawing in software (pixman):
+#   --incognito: profile, cache and history live in RAM only - no SD card
+#     writes, and nothing to "restore" after a power cut.
+#   --disable-background-networking / --disable-component-update /
+#     --disable-sync / --check-for-update-interval: no background downloads
+#     competing with the board for CPU, RAM and bandwidth.
+#   --renderer-process-limit=1: one page, one renderer.
+#   --disable-features: one flag only (Chromium honours the last one given).
+ExecStart=/usr/bin/cage -s -- /usr/bin/chromium \
+  --ozone-platform=wayland \
+  --incognito \
+  --noerrdialogs \
+  --disable-infobars \
+  --disable-translate \
+  --disable-features=TranslateUI,MediaRouter,OptimizationHints,AutofillServerCommunication,CalculateNativeWinOcclusion \
+  --disable-background-networking \
+  --disable-component-update \
+  --disable-sync \
+  --disable-default-apps \
+  --disable-extensions \
+  --no-default-browser-check \
+  --password-store=basic \
+  --check-for-update-interval=31536000 \
+  --renderer-process-limit=1 \
+  --no-first-run \
+  --kiosk \
+  --disable-pinch \
+  --overscroll-history-navigation=0 \
+  --disable-session-crashed-bubble \
+  --disable-restore-session-state \
+  --app=http://localhost:8080/
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

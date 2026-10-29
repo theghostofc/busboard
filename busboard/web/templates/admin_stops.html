@@ -1,0 +1,380 @@
+{% extends "base.html" %}
+{% block title %}BusBoard - Stops{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>Stops</h2>
+  <p class="muted">
+    Type a stop name. Select it to see available quais and directions.
+  </p>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+{%- macro stop_fields(x, title, cfg, label_ph) %}
+    <section class="stop-section" aria-labelledby="stop_{{ x }}_title">
+    <h3 class="stop-title" id="stop_{{ x }}_title"><span class="stop-letter">{{ x|upper }}</span>{{ title }}</h3>
+    <label for="stop_{{ x }}_search">Stop &amp; Quai</label>
+    <input type="text" id="stop_{{ x }}_search" autocomplete="off" placeholder="e.g. Mersch, Maartplaz"
+      value="{{ (cfg.name + ' \u2014 Quai ' + cfg.platform) if cfg.platform else cfg.name }}">
+    <div id="stop_{{ x }}_results" class="autocomplete-results" style="display:none;"></div>
+    <input type="hidden" id="stop_{{ x }}_id"       name="stop_{{ x }}_id"       value="{{ cfg.id }}">
+    <input type="hidden" id="stop_{{ x }}_name"     name="stop_{{ x }}_name"     value="{{ cfg.name }}">
+    <input type="hidden" id="stop_{{ x }}_platform" name="stop_{{ x }}_platform" value="{{ cfg.platform }}">
+
+    <label for="stop_{{ x }}_label">Display label (optional)</label>
+    <input type="text" id="stop_{{ x }}_label" name="stop_{{ x }}_label" value="{{ cfg.label }}" placeholder="{{ label_ph }}">
+
+    <label for="stop_{{ x }}_lines_input">Show only these lines (optional)</label>
+    <p class="field-hint">Leave empty to show every line. Pick from the lines serving this stop, or type one and press Enter.</p>
+    <div class="tag-picker" data-stop="stop_{{ x }}" data-field="stop_{{ x }}_lines">
+      <input type="hidden" name="stop_{{ x }}_lines" value="{{ cfg.lines }}">
+      <div class="tag-box"><input type="text" id="stop_{{ x }}_lines_input" class="tag-input" autocomplete="off" spellcheck="false" placeholder="All lines"></div>
+      <div class="autocomplete-results tag-menu" hidden></div>
+    </div>
+
+    <label for="stop_{{ x }}_favourites_input">Highlight these lines (optional)</label>
+    <p class="field-hint">Emphasised on the board. If "Show only these lines" is set, only those lines are offered here.</p>
+    <div class="tag-picker" data-stop="stop_{{ x }}" data-field="stop_{{ x }}_favourites">
+      <input type="hidden" name="stop_{{ x }}_favourites" value="{{ cfg.favourites }}">
+      <div class="tag-box"><input type="text" id="stop_{{ x }}_favourites_input" class="tag-input" autocomplete="off" spellcheck="false" placeholder="No highlighted lines"></div>
+      <div class="autocomplete-results tag-menu" hidden></div>
+    </div>
+
+    <div class="leave-block" id="stop_{{ x }}_leave">
+      <div class="leave-title">Leave now</div>
+      <p class="field-hint">
+        Badge style and margin are set under <a href="{{ url_for('admin_options') }}#leave-now">Options &rsaquo; Leave now</a>.
+      </p>
+      <label for="stop_{{ x }}_walk">Walking time to this stop (minutes)</label>
+      <p class="field-hint">0 turns "Leave now" off for this stop.</p>
+      <input type="number" id="stop_{{ x }}_walk" name="stop_{{ x }}_walk" min="0" max="30" step="1" value="{{ cfg.walk_minutes }}">
+      <label>Show it for</label>
+      <div class="seg" role="radiogroup">
+        <label><input type="radio" name="stop_{{ x }}_leave_lines" value="all"{% if cfg.leave_lines == "all" %} checked{% endif %}><span>All lines</span></label>
+        <label><input type="radio" name="stop_{{ x }}_leave_lines" value="highlighted"{% if cfg.leave_lines == "highlighted" %} checked{% endif %}><span>Highlighted lines only</span></label>
+      </div>
+      <p class="field-hint">With "Highlighted lines only" and no highlighted lines, all lines get the badge.</p>
+    </div>
+    </section>
+{%- endmacro %}
+    {{ stop_fields("a", "Direction A", config.stop_a, "e.g. Towards Luxembourg") }}
+    {{ stop_fields("b", "Direction B", config.stop_b, "e.g. Towards Ettelbruck") }}
+    <button type="submit">Save</button>
+  </form>
+</div>
+
+<style>
+  .stop-hint { color: #64748b; font-size: 0.8rem; float: right; }
+  .quai-loading { color: #8c929e; font-size: 0.8rem; padding: 6px 10px; }
+  .autocomplete-results div { user-select: none; }
+
+  /* Tag picker (line filters) */
+  .tag-picker { position: relative; }
+  .tag-box {
+    display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
+    padding: 4px 6px; min-height: 2.4rem; border: 1px solid var(--input-border);
+    border-radius: 4px; background: var(--input-bg); cursor: text;
+  }
+  .tag-box:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .tag {
+    display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 8px;
+    border-radius: 999px; background: var(--accent); color: #fff; font-size: 0.82rem; font-weight: 600;
+  }
+  .tag button {
+    margin: 0; padding: 0 4px; background: none; border: none; color: #fff;
+    font-size: 0.9rem; line-height: 1; cursor: pointer; opacity: 0.85;
+  }
+  .tag button:hover { background: none; opacity: 1; }
+  .tag-input { flex: 1; min-width: 6rem; border: none !important; outline: none !important; padding: 0.3rem 0.2rem !important; background: transparent !important; }
+  .tag-menu { position: absolute; left: 0; right: 0; top: 100%; z-index: 20; border-radius: 0 0 4px 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-height: 220px; overflow-y: auto; }
+  .tag-menu .opt { display: flex; justify-content: space-between; gap: 0.5rem; }
+  .tag-menu .opt .dir { color: var(--text-muted); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tag-menu .opt.hint { color: var(--text-muted); cursor: default; }
+
+  .stop-section { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 2px solid var(--border); }
+  .stop-section:first-of-type { margin-top: 0.5rem; padding-top: 0; border-top: none; }
+  .card h3.stop-title {
+    display: flex; align-items: center; gap: 0.6rem; margin: 0 0 0.25rem;
+    font-size: 1.15rem; color: var(--text); text-transform: none; letter-spacing: 0;
+  }
+  .stop-letter {
+    display: inline-flex; align-items: center; justify-content: center; width: 1.8rem; height: 1.8rem;
+    border-radius: 50%; background: var(--accent); color: #fff; font-size: 0.95rem; font-weight: 700;
+  }
+  .leave-block { margin-top: 1rem; padding: 0.75rem 0.9rem 0.9rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-alt); }
+  .leave-title { font-weight: 600; font-size: 0.9rem; }
+  .leave-block > label:first-of-type { margin-top: 0.5rem; }
+</style>
+
+<script>
+// Two-stage autocomplete.
+//
+// Stage 1 — name search (no API call, uses cached stop list):
+//   - Results are de-duplicated by name.
+//   - Stops with multiple platform IDs show a "›" hint so the user knows
+//     a second step is coming.
+//
+// Stage 2 — quai/platform selection (one API call per unique stop name,
+//   cached server-side for 6 hours):
+//   - The backend receives ALL stop IDs for the chosen name and aggregates
+//     quai data across them, so one click is enough regardless of how many
+//     platform IDs the stop has.
+//   - If the stop has no quai data (single-platform stop), it is selected
+//     immediately without a second step.
+
+function setupAutocomplete(prefix) {
+  const search    = document.getElementById(prefix + "_search");
+  const results   = document.getElementById(prefix + "_results");
+  const idField   = document.getElementById(prefix + "_id");
+  const nameField = document.getElementById(prefix + "_name");
+  const platField = document.getElementById(prefix + "_platform");
+
+  let debounceTimer = null;
+  let currentController = null;
+
+  function closeResults() {
+    results.style.display = "none";
+    results.innerHTML = "";
+  }
+
+  function selectStop(name, id, platform) {
+    nameField.value = name;
+    idField.value   = id;
+    platField.value = platform;
+    search.value    = platform ? name + " \u2014 Quai " + platform : name;
+    closeResults();
+    loadLines(prefix);  // refresh the line suggestions for the tag pickers
+  }
+
+  function messageRow(text, retryEntry) {
+    results.innerHTML = "";
+    const div = document.createElement("div");
+    div.className = "quai-loading";
+    div.textContent = text;
+    results.appendChild(div);
+    if (retryEntry) {
+      const retry = document.createElement("div");
+      retry.textContent = "\u21bb Try again";
+      retry.addEventListener("click", (e) => { e.stopPropagation(); loadPlatformsFor(retryEntry); });
+      results.appendChild(retry);
+    }
+    results.style.display = "block";
+  }
+
+  function loadPlatformsFor(entry) {
+    // entry = { name, ids: [...], has_multiple }
+    messageRow("Loading quais\u2026");
+    const idsParam = encodeURIComponent(entry.ids.join(","));
+    fetch("{{ url_for('admin_api_stops_platforms') }}?ids=" + idsParam)
+      .then(r => r.json().then(data => ({ ok: r.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok) {
+          messageRow((data && data.error) || "Couldn't load quais.", entry);
+          return;
+        }
+        const platforms = (data && data.platforms) || [];
+        if (platforms.length === 0) {
+          // No quai data (single-platform stop): select it directly.
+          selectStop(entry.name, entry.ids[0], "");
+          return;
+        }
+        results.innerHTML = "";
+        platforms.forEach((p) => {
+          // Each quai carries the stop ID it was found under.
+          const div = document.createElement("div");
+          const b = document.createElement("b");
+          b.textContent = entry.name;
+          const quai = document.createElement("span");
+          quai.style.color = "#56c478";
+          quai.textContent = " \u2014 Quai " + p.quai;
+          const towards = document.createElement("span");
+          towards.style.cssText = "color:#8c929e;font-size:0.82rem;";
+          towards.textContent = p.example ? " \u00b7 towards " + p.example : "";
+          div.append(b, quai, towards);
+          div.addEventListener("click", (e) => {
+            e.stopPropagation();
+            selectStop(entry.name, p.stop_id, p.quai);
+          });
+          results.appendChild(div);
+        });
+        results.style.display = "block";
+      })
+      .catch(() => messageRow("Couldn't load quais (network error).", entry));
+  }
+
+  // Stage 1: text input → debounced name search
+  search.addEventListener("input", () => {
+    idField.value   = "";
+    nameField.value = "";
+    platField.value = "";
+    const query = search.value.trim();
+    clearTimeout(debounceTimer);
+    if (query.length < 2) { closeResults(); return; }
+
+    debounceTimer = setTimeout(() => {
+      if (currentController) currentController.abort();
+      currentController = new AbortController();
+      fetch("{{ url_for('admin_api_stops_search') }}?q=" + encodeURIComponent(query), {
+        signal: currentController.signal,
+      })
+        .then(r => r.json())
+        .then(data => {
+          results.innerHTML = "";
+          if (!data.results || data.results.length === 0) { closeResults(); return; }
+
+          data.results.forEach(entry => {
+            const div = document.createElement("div");
+            // Show the stop name; if multiple IDs exist, hint that quai
+            // selection follows with a "›" arrow.
+            div.textContent = entry.name;
+            if (entry.has_multiple) {
+              const hint = document.createElement("span");
+              hint.className = "stop-hint";
+              hint.textContent = "› select quai";
+              div.appendChild(hint);
+            }
+            div.addEventListener("click", (e) => {
+              e.stopPropagation();
+              loadPlatformsFor(entry);
+            });
+            results.appendChild(div);
+          });
+          results.style.display = "block";
+        })
+        .catch(() => {});
+    }, 250);
+  });
+
+  // Close dropdown when clicking outside
+  document.addEventListener("click", (e) => {
+    if (!results.contains(e.target) && e.target !== search) closeResults();
+  });
+}
+
+// ── Tag pickers for "Show only these lines" / "Highlight these lines" ──
+// Each keeps the comma-separated value in its hidden input (what the form
+// posts). Suggestions are the lines that serve the selected stop/quai; any
+// other line can be typed and added with Enter or a comma.
+const LINE_RE = /^[A-Za-z0-9][A-Za-z0-9 .\-]{0,9}$/;
+const lineCache = {};   // "stop_a" -> [{line, direction}]
+const pickers = [];
+
+function parseLines(v) {
+  const seen = new Set();
+  return v.split(",").map(t => t.trim()).filter(t => t && !seen.has(t) && seen.add(t));
+}
+
+function setupTagPicker(root) {
+  const hidden = root.querySelector('input[type=hidden]');
+  const box = root.querySelector('.tag-box');
+  const input = root.querySelector('.tag-input');
+  const menu = root.querySelector('.tag-menu');
+  const stop = root.dataset.stop;
+  let tags = parseLines(hidden.value);
+
+  function save() { hidden.value = tags.join(","); }
+
+  function renderTags() {
+    box.querySelectorAll('.tag').forEach(t => t.remove());
+    tags.forEach((t, i) => {
+      const chip = document.createElement("span");
+      chip.className = "tag";
+      chip.appendChild(document.createTextNode(t));
+      const x = document.createElement("button");
+      x.type = "button";
+      x.textContent = "\u00d7";
+      x.setAttribute("aria-label", "Remove line " + t);
+      x.addEventListener("click", (e) => { e.stopPropagation(); tags.splice(i, 1); save(); renderTags(); renderMenu(); });
+      chip.appendChild(x);
+      box.insertBefore(chip, input);
+    });
+    input.placeholder = tags.length ? "" : input.dataset.empty;
+  }
+
+  function add(t) {
+    t = t.trim();
+    if (!t || !LINE_RE.test(t) || tags.includes(t)) return;
+    tags.push(t); save(); renderTags();
+  }
+
+  function renderMenu() {
+    if (document.activeElement !== input) { menu.hidden = true; return; }
+    const q = input.value.trim().toLowerCase();
+    let known = lineCache[stop];
+    // Highlighting a hidden line has no effect: offer only the shown lines
+    // when "Show only these lines" is set.
+    if (known && root.dataset.field.endsWith("_favourites")) {
+      const shown = parseLines(document.querySelector('input[name="' + stop + '_lines"]').value);
+      if (shown.length) known = known.filter(l => shown.includes(l.line));
+    }
+    menu.textContent = "";
+    const opts = (known || []).filter(l => !tags.includes(l.line) && (!q || l.line.toLowerCase().startsWith(q)));
+    opts.forEach(l => {
+      const row = document.createElement("div");
+      row.className = "opt";
+      const b = document.createElement("strong"); b.textContent = l.line;
+      const d = document.createElement("span"); d.className = "dir"; d.textContent = l.direction ? "towards " + l.direction : "";
+      row.append(b, d);
+      row.addEventListener("mousedown", (e) => { e.preventDefault(); add(l.line); input.value = ""; renderMenu(); });
+      menu.appendChild(row);
+    });
+    if (!opts.length) {
+      const hint = document.createElement("div");
+      hint.className = "opt hint";
+      hint.textContent = known === undefined ? "Loading lines\u2026"
+        : (q && LINE_RE.test(q) ? 'Press Enter to add "' + input.value.trim() + '"'
+        : (document.getElementById(stop + "_id").value ? "No more lines found for this stop" : "Pick the stop first, or type a line"));
+      menu.appendChild(hint);
+    }
+    menu.hidden = false;
+  }
+
+  input.dataset.empty = input.placeholder;
+  box.addEventListener("click", () => input.focus());
+  input.addEventListener("focus", renderMenu);
+  input.addEventListener("blur", () => { add(input.value); input.value = ""; menu.hidden = true; });
+  input.addEventListener("input", () => {
+    if (input.value.includes(",")) { input.value.split(",").forEach(add); input.value = ""; }
+    renderMenu();
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); add(input.value); input.value = ""; renderMenu(); }
+    else if (e.key === "Backspace" && !input.value && tags.length) { tags.pop(); save(); renderTags(); renderMenu(); }
+    else if (e.key === "Escape") { menu.hidden = true; }
+  });
+  renderTags();
+  pickers.push({ stop, renderMenu });
+}
+
+function loadLines(prefix) {
+  const id = document.getElementById(prefix + "_id").value;
+  if (!id) { lineCache[prefix] = []; return; }
+  delete lineCache[prefix];
+  const platform = document.getElementById(prefix + "_platform").value;
+  fetch("{{ url_for('admin_api_stops_lines') }}?id=" + encodeURIComponent(id) + "&platform=" + encodeURIComponent(platform))
+    .then(r => r.ok ? r.json() : { lines: [] })
+    .then(data => { lineCache[prefix] = data.lines || []; })
+    .catch(() => { lineCache[prefix] = []; })
+    .then(() => pickers.filter(p => p.stop === prefix).forEach(p => p.renderMenu()));
+}
+
+document.querySelectorAll(".tag-picker").forEach(setupTagPicker);
+setupAutocomplete("stop_a");
+setupAutocomplete("stop_b");
+loadLines("stop_a");
+loadLines("stop_b");
+
+// Typed text that wasn't picked from the list has no stop ID - don't save
+// that silently as "no stop".
+document.querySelector("form").addEventListener("submit", (e) => {
+  for (const prefix of ["stop_a", "stop_b"]) {
+    const typed = document.getElementById(prefix + "_search").value.trim();
+    if (typed && !document.getElementById(prefix + "_id").value) {
+      e.preventDefault();
+      alert("Please pick " + (prefix === "stop_a" ? "Direction A" : "Direction B") +
+            " from the suggestion list (and its quai, if asked).");
+      document.getElementById(prefix + "_search").focus();
+      return;
+    }
+  }
+});
+</script>
+{% endblock %}
